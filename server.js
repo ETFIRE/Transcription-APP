@@ -134,7 +134,7 @@ app.post('/api/webhooks/livekit', async (req, res) => {
       console.log(`Réunion ${reunion.id} passée au statut "en_traitement"`);
 
       // 3. Appel du workflow n8n
-      const n8nWebhookUrl = 'http://localhost:5678/webhook-test/v1/meeting/process';
+      const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/v1/meeting/process';
       console.log('Déclenchement du pipeline n8n...');
 
       try {
