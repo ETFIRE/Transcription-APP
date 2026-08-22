@@ -7,39 +7,81 @@ import { DecisionsCard, ActionsCard } from '@/components/report/actions-panel'
 import { ParticipantsCard } from '@/components/report/participants-card'
 import { Loader2, Clock } from 'lucide-react'
 
-// Forcer le rendu dynamique pour charger n'importe quel UUID Supabase
 export const dynamic = 'force-dynamic'
 
 export default async function MeetingReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
-  // 1. Recherche dans Supabase en priorité
-  const { data: dbMeeting, error } = await supabase
-    .from('reunions')
-    .select('*')
-    .eq('id', id)
-    .single()
+  let dbMeeting: any = null
+  let dbAnalysis: any = null
+  let dbTranscriptions: any[] = []
+
+  try {
+    // 1. Récupération de la réunion
+    const { data: mData } = await supabase
+      .from('reunions')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+
+    dbMeeting = mData
+
+    if (dbMeeting) {
+      // 2. Récupération de l'analyse (résumé, actions, décisions)
+      const { data: aData } = await supabase
+        .from('analyses_reunion')
+        .select('*')
+        .eq('reunion_id', id)
+        .maybeSingle()
+      dbAnalysis = aData
+
+      // 3. Récupération des transcriptions découpées
+      const { data: tData } = await supabase
+        .from('transcriptions')
+        .select('*')
+        .eq('reunion_id', id)
+        .order('debut_secondes', { ascending: true })
+      dbTranscriptions = tData || []
+    }
+  } catch (e) {
+    console.error('Erreur Supabase:', e)
+  }
 
   let meeting: any = null
 
   if (dbMeeting) {
-    // Normalisation des données Supabase pour les composants d'affichage
+    // Parser les formats si nécessaire
+    const parseJson = (val: any, fallback: any) => {
+      if (!val) return fallback
+      if (typeof val === 'string') {
+        try { return JSON.parse(val) } catch { return fallback }
+      }
+      return val
+    }
+
+    const transcriptFormatted = dbTranscriptions.length > 0
+      ? dbTranscriptions.map((t) => ({
+          speaker: t.label_speaker || 'Intervenant',
+          time: t.debut_secondes ? `${Math.floor(t.debut_secondes / 60)}:${String(Math.floor(t.debut_secondes % 60)).padStart(2, '0')}` : '0:00',
+          text: t.texte || '',
+        }))
+      : []
+
     meeting = {
       id: dbMeeting.id,
-      title: dbMeeting.titre || 'Réunion sans titre',
-      date: dbMeeting.created_at ? new Date(dbMeeting.created_at).toLocaleDateString('fr-FR') : 'Aujourd\'hui',
-      duration: dbMeeting.duree_secondes ? `${Math.round(dbMeeting.duree_secondes / 60)} min` : '0 min',
+      title: dbMeeting.titre || 'Compte-rendu de réunion',
+      date: dbMeeting.cree_le ? new Date(dbMeeting.cree_le).toLocaleDateString('fr-FR') : 'Aujourd\'hui',
+      duration: dbMeeting.duree_secondes ? `${Math.round(dbMeeting.duree_secondes / 60)} min` : '5 min',
       status: dbMeeting.statut,
-      summary: dbMeeting.resume || (dbMeeting.statut === 'en_attente' ? 'Traitement audio et analyse IA en cours...' : 'Aucun résumé disponible.'),
-      transcript: dbMeeting.transcription_brute || [],
-      decisions: dbMeeting.decisions || [],
-      actionItems: dbMeeting.actions || [],
-      participants: dbMeeting.participants || [{ name: 'Moi', role: 'Organisateur' }],
-      tone: dbMeeting.ton || 'Neutre',
-      themes: dbMeeting.themes || ['Général'],
+      summary: dbAnalysis?.resume || (dbMeeting.statut === 'en_attente' ? 'Traitement audio et analyse IA en cours...' : 'Aucun résumé disponible.'),
+      transcript: transcriptFormatted,
+      decisions: parseJson(dbAnalysis?.themes, []),
+      actionItems: parseJson(dbAnalysis?.actions, []),
+      participants: [{ name: 'Moi', role: 'Organisateur' }],
+      tone: dbAnalysis?.ton || 'Neutre',
+      themes: parseJson(dbAnalysis?.themes, ['Général']),
     }
   } else {
-    // 2. Fallback mock pour les tests locaux (mtg-001, etc.)
     meeting = getMeeting(id)
   }
 
@@ -47,20 +89,20 @@ export default async function MeetingReportPage({ params }: { params: Promise<{ 
     notFound()
   }
 
-  // 3. Affichage d'attente si la synthèse n'est pas encore prête
-  if (meeting.status === 'en_attente' && (!meeting.transcript || meeting.transcript.length === 0)) {
+  // Affichage attente si en cours de traitement
+  if (meeting.status === 'en_attente' || (meeting.transcript.length === 0 && !dbAnalysis?.resume)) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-16 text-center">
         <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card p-12 shadow-sm">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <Loader2 className="h-8 w-8 animate-spin text-brand" />
+            <Loader2 className="h-8 w-8 animate-spin" />
           </div>
           <h2 className="text-2xl font-semibold tracking-tight">Analyse en cours</h2>
           <p className="max-w-md text-muted-foreground text-sm">
-            L'audio a bien été enregistré. Le pipeline de transcription et de synthèse est en train de traiter les données.
+            L'enregistrement a bien été reçu. L'IA génère la transcription et la synthèse.
           </p>
           <div className="flex items-center gap-2 rounded-full bg-secondary px-3 py-1 text-xs text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" /> Statut : {meeting.status}
+            <Clock className="h-3.5 w-3.5" /> Statut : {meeting.status || 'en_attente'}
           </div>
         </div>
       </div>
