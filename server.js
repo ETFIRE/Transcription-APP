@@ -1,12 +1,5 @@
-const cors = require('cors');
-// Autoriser toutes les origines (ou localhost:3000)
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
 import express from 'express';
+import cors from 'cors';
 import dotenv from 'dotenv';
 import { AccessToken, WebhookReceiver } from 'livekit-server-sdk';
 import { createClient } from '@supabase/supabase-js';
@@ -15,6 +8,13 @@ import crypto from 'crypto';
 dotenv.config();
 
 const app = express();
+
+// Configuration CORS (autorise les requêtes de ton frontend local et de production)
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 // Middleware raw pour la validation de signature LiveKit
 app.use(express.raw({ type: 'application/webhook+json' }));
@@ -101,7 +101,6 @@ app.post('/api/webhooks/livekit', async (req, res) => {
     const authHeader = req.get('Authorization');
     let event;
 
-    // Validation signature si le header existe, sinon mode test local
     if (authHeader) {
       const rawBody = req.body.toString();
       event = await webhookReceiver.receive(rawBody, authHeader);
@@ -119,7 +118,6 @@ app.post('/api/webhooks/livekit', async (req, res) => {
 
       console.log(`Enregistrement finalisé pour la room : ${roomName}`);
 
-      // 1. Récupération de la réunion dans Supabase
       const { data: reunion, error } = await supabase
         .from('reunions')
         .select('id, tenant_id')
@@ -133,7 +131,6 @@ app.post('/api/webhooks/livekit', async (req, res) => {
 
       const fileUrl = fileResult?.location || fileResult?.filename;
 
-      // 2. Mise à jour du statut dans Supabase
       await supabase
         .from('reunions')
         .update({ statut: 'en_traitement' })
@@ -141,7 +138,6 @@ app.post('/api/webhooks/livekit', async (req, res) => {
 
       console.log(`Réunion ${reunion.id} passée au statut "en_traitement"`);
 
-      // 3. Appel du workflow n8n
       const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/v1/meeting/process';
       console.log('Déclenchement du pipeline n8n...');
 
