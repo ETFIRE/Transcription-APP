@@ -1,5 +1,13 @@
-node_modules/
+﻿node_modules/
+.next/
+frontend/node_modules/
+frontend/.next/
+out/
+build/
+*.log
+__pycache__/
+*.pyc
 .env
-IDENTIFIANTS.txt
-*.txt
-recordings/
+.env*.local
+venv/
+.venv/
