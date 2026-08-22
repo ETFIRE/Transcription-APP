@@ -26,7 +26,7 @@ export function VisioWireframe() {
           {
             titre: `Réunion Visio - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
             type: 'visio',
-            statut: 'en_cours_traitement',
+            statut: 'en_attente',
           },
         ])
         .select('id')
