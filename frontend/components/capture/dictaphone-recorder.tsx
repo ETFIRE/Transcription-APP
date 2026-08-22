@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Mic, Square, Loader2, Sparkles, AlertCircle } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { getCurrentTenantId } from '@/lib/get-tenant'
 
 export function DictaphoneRecorder() {
   const router = useRouter()

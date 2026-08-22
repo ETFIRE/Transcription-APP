@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Video, PhoneOff, Users, Loader2, AlertCircle } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { getCurrentTenantId } from '@/lib/get-tenant'
 
 export function VisioWireframe() {
   const router = useRouter()
@@ -20,6 +21,7 @@ export function VisioWireframe() {
 
     try {
       // 1. Insertion de la session visio dans Supabase
+      const tenantId = await getCurrentTenantId()
       const { data, error } = await supabase
         .from('reunions')
         .insert([
@@ -27,6 +29,7 @@ export function VisioWireframe() {
             titre: `Réunion Visio - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
             type_mode: 'visio',
             statut: 'en_attente',
+            tenant_id: tenantId,
           },
         ])
         .select('id')
