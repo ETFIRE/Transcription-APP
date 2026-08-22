@@ -7,6 +7,7 @@ import {
   EgressClient,
   EncodedFileOutput,
   EncodedFileType,
+  S3Upload,
 } from 'livekit-server-sdk';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
@@ -15,7 +16,6 @@ dotenv.config();
 
 const app = express();
 
-// Configuration CORS
 app.use(
   cors({
     origin: '*',
@@ -24,7 +24,6 @@ app.use(
   })
 );
 
-// Middleware raw pour la validation de signature LiveKit
 app.use(express.raw({ type: 'application/webhook+json' }));
 app.use(express.json());
 
@@ -103,7 +102,7 @@ app.post('/api/reunions/creer', async (req, res) => {
 });
 
 // ----------------------------------------------------
-// 2. ROUTE DE CLÔTURE DE RÉUNION ET LANCEMENT EGRESS / N8N
+// 2. ROUTE DE CLÔTURE DE RÉUNION AVEC EGRESS S3 SUPABASE
 // ----------------------------------------------------
 app.post('/api/reunions/terminer', async (req, res) => {
   try {
@@ -113,7 +112,6 @@ app.post('/api/reunions/terminer', async (req, res) => {
       return res.status(400).json({ error: 'Paramètre reunion_id manquant.' });
     }
 
-    // 1. Récupération de la réunion
     const { data: reunion, error: fetchErr } = await supabase
       .from('reunions')
       .select('*')
@@ -127,26 +125,38 @@ app.post('/api/reunions/terminer', async (req, res) => {
     const roomName = reunion.chime_meeting_id;
     let egressId = null;
 
-    // 2. Tentative de lancement Egress avec fallback n8n direct
     try {
+      // Configuration de la destination S3 Supabase
+      const s3Upload = new S3Upload({
+        endpoint: process.env.S3_ENDPOINT,
+        accessKey: process.env.S3_ACCESS_KEY,
+        secret: process.env.S3_SECRET_KEY,
+        region: process.env.S3_REGION || 'eu-west-3',
+        bucket: process.env.S3_BUCKET || 'recordings',
+        forcePathStyle: true,
+      });
+
       const output = new EncodedFileOutput({
         fileType: EncodedFileType.MP4,
-        filepath: `recordings/${roomName}.mp4`,
+        filepath: `${roomName}.mp4`,
+        output: {
+          case: 's3',
+          value: s3Upload,
+        },
       });
 
       const info = await egressClient.startRoomCompositeEgress(roomName, {
         file: output,
       });
       egressId = info.egressId;
-      console.log(`Egress démarré pour ${roomName} (ID: ${egressId})`);
+      console.log(`Egress S3 démarré pour ${roomName} (ID: ${egressId})`);
 
       await supabase
         .from('reunions')
         .update({ statut: 'en_cours_finalisation' })
         .eq('id', reunion_id);
     } catch (egressErr) {
-      console.warn('Egress non configuré ou indisponible :', egressErr.message);
-      console.log('Déclenchement direct du workflow n8n...');
+      console.warn('Erreur ou fallback Egress :', egressErr.message);
 
       await supabase
         .from('reunions')
@@ -158,7 +168,7 @@ app.post('/api/reunions/terminer', async (req, res) => {
         'https://n8n-production-88b79.up.railway.app/webhook/v1/meeting/process';
 
       try {
-        await fetch(n8nWebhookUrl, {
+        await globalThis.fetch(n8nWebhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -167,13 +177,13 @@ app.post('/api/reunions/terminer', async (req, res) => {
             audio_url: null,
           }),
         });
-        console.log('Pipeline n8n notifié avec succès (mode direct) !');
+        console.log('n8n notifié en direct (mode fallback)');
       } catch (n8nErr) {
         console.error('Erreur appel n8n :', n8nErr.message);
       }
     }
 
-    return res.json({ success: true, egress_id: egressId });
+    return res.status(200).json({ success: true, egress_id: egressId });
   } catch (err) {
     console.error('Erreur générale fin de réunion :', err);
     return res.status(500).json({ error: err.message || String(err) });
@@ -192,7 +202,7 @@ app.post('/api/webhooks/livekit', async (req, res) => {
       const rawBody = req.body.toString();
       event = await webhookReceiver.receive(rawBody, authHeader);
     } else {
-      console.log('⚠️ Requête sans en-tête Authorization : mode simulation locale');
+      console.log('⚠️ Requête sans en-tête Authorization : mode simulation');
       event = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
     }
 
@@ -203,7 +213,7 @@ app.post('/api/webhooks/livekit', async (req, res) => {
       const roomName = egressInfo?.roomName;
       const fileResult = egressInfo?.fileResults?.[0] || egressInfo?.file;
 
-      console.log(`Enregistrement finalisé pour la room : ${roomName}`);
+      console.log(`Enregistrement S3 finalisé pour la room : ${roomName}`);
 
       const { data: reunion, error } = await supabase
         .from('reunions')
@@ -216,31 +226,30 @@ app.post('/api/webhooks/livekit', async (req, res) => {
         return res.status(404).send('Réunion non trouvée');
       }
 
-      const fileUrl = fileResult?.location || fileResult?.filename;
+      // Construction de l'URL publique Supabase Storage
+      const supabaseProjectUrl = process.env.SUPABASE_URL.replace(/\/$/, '');
+      const publicAudioUrl = `${supabaseProjectUrl}/storage/v1/object/public/recordings/${roomName}.mp4`;
 
       await supabase
         .from('reunions')
         .update({ statut: 'en_traitement' })
         .eq('id', reunion.id);
 
-      console.log(`Réunion ${reunion.id} passée au statut "en_traitement"`);
-
       const n8nWebhookUrl =
         process.env.N8N_WEBHOOK_URL ||
         'https://n8n-production-88b79.up.railway.app/webhook/v1/meeting/process';
-      console.log('Déclenchement du pipeline n8n...');
 
       try {
-        await fetch(n8nWebhookUrl, {
+        await globalThis.fetch(n8nWebhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             tenant_id: reunion.tenant_id,
             reunion_id: reunion.id,
-            audio_url: fileUrl,
+            audio_url: publicAudioUrl,
           }),
         });
-        console.log('Pipeline n8n notifié avec succès !');
+        console.log(`Pipeline n8n notifié avec l'URL audio S3 : ${publicAudioUrl}`);
       } catch (n8nErr) {
         console.warn('Erreur appel n8n :', n8nErr.message);
       }
