@@ -1,198 +1,135 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import Link from 'next/link'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Mic, Pause, Play, Square, Loader2, ArrowRight, ArrowLeft, CheckCircle2 } from 'lucide-react'
-import { formatClock } from '@/lib/mock-data'
+import { Card, CardContent } from '@/components/ui/card'
+import { Mic, Square, Loader2, Sparkles, AlertCircle } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 
-type Phase = 'idle' | 'recording' | 'paused' | 'processing' | 'done'
-
-const mockTranscript = [
-  { speaker: 'Speaker 1', text: "Let's start divergent — no bad ideas for the next ten minutes on the onboarding flow." },
-  { speaker: 'Speaker 2', text: 'What if we hide advanced settings entirely until the user hits a real need?' },
-  { speaker: 'Speaker 3', text: 'Progressive setup — I like it. It matches how people actually ramp up.' },
-]
-
-export function DictaphoneRecorder({ title, onBack }: { title: string; onBack: () => void }) {
-  const [phase, setPhase] = useState<Phase>('idle')
+export function DictaphoneRecorder() {
+  const router = useRouter()
+  const [isRecording, setIsRecording] = useState(false)
   const [seconds, setSeconds] = useState(0)
-  const [revealed, setRevealed] = useState(0)
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const timerRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    if (phase === 'recording') {
-      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
+    if (isRecording) {
+      timerRef.current = setInterval(() => {
+        setSeconds((prev) => prev + 1)
+      }, 1000)
     } else if (timerRef.current) {
       clearInterval(timerRef.current)
     }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
     }
-  }, [phase])
+  }, [isRecording])
 
-  // Simulate transcription after processing
-  useEffect(() => {
-    if (phase !== 'processing') return
-    const t = setTimeout(() => setPhase('done'), 2200)
-    return () => clearTimeout(t)
-  }, [phase])
+  const formatTime = (secs: number) => {
+    const mins = Math.floor(secs / 60)
+    const rem = secs % 60
+    return `${mins.toString().padStart(2, '0')}:${rem.toString().padStart(2, '0')}`
+  }
 
-  useEffect(() => {
-    if (phase !== 'done') return
-    if (revealed >= mockTranscript.length) return
-    const t = setTimeout(() => setRevealed((r) => r + 1), 500)
-    return () => clearTimeout(t)
-  }, [phase, revealed])
+  const handleStartRecording = () => {
+    setErrorMessage(null)
+    setSeconds(0)
+    setIsRecording(true)
+  }
 
-  const isRecording = phase === 'recording'
+  const handleStopRecording = async () => {
+    setIsRecording(false)
+    setIsProcessing(true)
+    setErrorMessage(null)
+
+    try {
+      // 1. Création de la réunion réelle dans Supabase
+      const { data, error } = await supabase
+        .from('reunions')
+        .insert([
+          {
+            titre: `Enregistrement Dictaphone - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
+            type: 'dictaphone',
+            statut: 'en_cours_traitement',
+            duree_secondes: seconds,
+          },
+        ])
+        .select('id')
+        .single()
+
+      if (error) throw error
+
+      if (data?.id) {
+        // 2. Redirection dynamique vers l'ID réel
+        router.push(`/meetings/${data.id}`)
+      } else {
+        throw new Error('Identifiant de réunion introuvable.')
+      }
+    } catch (err: any) {
+      console.error('Erreur lors de la création de la réunion:', err)
+      setErrorMessage(err.message || "Une erreur est survenue lors de l'enregistrement.")
+      setIsProcessing(false)
+    }
+  }
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <Button variant="ghost" size="sm" onClick={onBack} className="mb-4 gap-1.5">
-        <ArrowLeft className="h-4 w-4" />
-        Back
-      </Button>
-
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand/10 text-brand">
-                <Mic className="h-4 w-4" />
-              </span>
-              <div>
-                <h2 className="text-base font-semibold leading-tight">{title}</h2>
-                <p className="text-xs text-muted-foreground">Dictaphone mode</p>
-              </div>
-            </div>
-            {isRecording && (
-              <span className="inline-flex items-center gap-2 rounded-full bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-destructive" />
-                Recording
-              </span>
-            )}
+    <Card className="mx-auto max-w-xl shadow-lg">
+      <CardContent className="flex flex-col items-center gap-6 p-8 text-center">
+        <div className="relative flex items-center justify-center">
+          {isRecording && (
+            <span className="absolute h-24 w-24 animate-ping rounded-full bg-red-400 opacity-75" />
+          )}
+          <div
+            className={`flex h-20 w-20 items-center justify-center rounded-full shadow-inner transition-colors ${
+              isRecording ? 'bg-destructive text-white' : 'bg-secondary text-foreground'
+            }`}
+          >
+            <Mic className="h-10 w-10" />
           </div>
-        </CardHeader>
+        </div>
 
-        <CardContent className="space-y-6">
-          {/* Timer + waveform */}
-          <div className="flex flex-col items-center gap-5 rounded-2xl border border-border bg-secondary/40 py-8">
-            <span className="font-mono text-5xl tabular-nums tracking-tight">{formatClock(seconds)}</span>
-            <Waveform active={isRecording} />
-            <p className="text-xs text-muted-foreground">
-              {phase === 'idle' && 'Ready to record from your microphone'}
-              {phase === 'recording' && 'Capturing audio — long sessions are handled automatically'}
-              {phase === 'paused' && 'Paused'}
-              {phase === 'processing' && 'Uploading and transcribing…'}
-              {phase === 'done' && 'Transcription complete'}
-            </p>
+        <div>
+          <h3 className="text-2xl font-semibold">
+            {isRecording ? 'Enregistrement en cours...' : 'Mode Dictaphone'}
+          </h3>
+          <p className="font-mono text-3xl font-bold mt-2 text-foreground">
+            {formatTime(seconds)}
+          </p>
+        </div>
+
+        {errorMessage && (
+          <div className="flex items-center gap-2 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{errorMessage}</span>
           </div>
+        )}
 
-          {/* Controls */}
-          {phase !== 'processing' && phase !== 'done' && (
-            <div className="flex items-center justify-center gap-3">
-              {phase === 'idle' && (
-                <Button size="lg" className="gap-2" onClick={() => setPhase('recording')}>
-                  <Mic className="h-4 w-4" />
-                  Start recording
-                </Button>
-              )}
-              {phase === 'recording' && (
-                <>
-                  <Button size="lg" variant="outline" className="gap-2" onClick={() => setPhase('paused')}>
-                    <Pause className="h-4 w-4" />
-                    Pause
-                  </Button>
-                  <Button size="lg" variant="destructive" className="gap-2" onClick={() => setPhase('processing')}>
-                    <Square className="h-4 w-4" />
-                    Stop & transcribe
-                  </Button>
-                </>
-              )}
-              {phase === 'paused' && (
-                <>
-                  <Button size="lg" className="gap-2" onClick={() => setPhase('recording')}>
-                    <Play className="h-4 w-4" />
-                    Resume
-                  </Button>
-                  <Button size="lg" variant="destructive" className="gap-2" onClick={() => setPhase('processing')}>
-                    <Square className="h-4 w-4" />
-                    Stop & transcribe
-                  </Button>
-                </>
-              )}
-            </div>
+        <div className="flex gap-4">
+          {!isRecording && !isProcessing && (
+            <Button size="lg" onClick={handleStartRecording} className="gap-2">
+              <Mic className="h-4 w-4" />
+              Démarrer l'enregistrement
+            </Button>
           )}
 
-          {phase === 'processing' && (
-            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+          {isRecording && (
+            <Button size="lg" variant="destructive" onClick={handleStopRecording} className="gap-2">
+              <Square className="h-4 w-4" />
+              Arrêter et analyser
+            </Button>
+          )}
+
+          {isProcessing && (
+            <Button size="lg" disabled className="gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Running speech-to-text and speaker diarization…
-            </div>
+              Création et transfert en cours...
+            </Button>
           )}
-
-          {/* Mock transcript */}
-          {phase === 'done' && (
-            <div className="space-y-4">
-              <div className="space-y-3 rounded-xl border border-border p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Transcript preview (sample)
-                </p>
-                {mockTranscript.slice(0, revealed).map((line, i) => (
-                  <div key={i} className="flex gap-3">
-                    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-semibold text-secondary-foreground">
-                      {line.speaker.split(' ')[1]}
-                    </span>
-                    <p className="text-sm leading-relaxed">
-                      <span className="font-medium">{line.speaker}: </span>
-                      <span className="text-muted-foreground">{line.text}</span>
-                    </p>
-                  </div>
-                ))}
-                {revealed < mockTranscript.length && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Attributing speakers…
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 rounded-lg bg-chart-2/10 p-3 text-sm text-chart-2">
-                <CheckCircle2 className="h-4 w-4" />
-                Report generated with decisions, themes, and actions.
-              </div>
-
-              <Button asChild size="lg" className="w-full gap-2">
-                <Link href="/meetings/mtg-003">
-                  View meeting report
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-function Waveform({ active }: { active: boolean }) {
-  const bars = 40
-  return (
-    <div className="flex h-12 items-center gap-1" aria-hidden="true">
-      {Array.from({ length: bars }).map((_, i) => (
-        <span
-          key={i}
-          className="w-1 rounded-full bg-brand/70"
-          style={{
-            height: active ? `${20 + Math.abs(Math.sin(i * 0.7)) * 80}%` : '12%',
-            animation: active ? `wave 1s ease-in-out ${i * 0.04}s infinite alternate` : 'none',
-          }}
-        />
-      ))}
-      <style>{`@keyframes wave { from { transform: scaleY(0.35); } to { transform: scaleY(1); } }`}</style>
-    </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
