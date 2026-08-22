@@ -52,7 +52,7 @@ export function DictaphoneRecorder() {
         .insert([
           {
             titre: `Enregistrement Dictaphone - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
-            type: 'dictaphone',
+            type_mode: 'dictaphone',
             statut: 'en_cours_traitement',
             duree_secondes: seconds,
           },

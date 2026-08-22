@@ -25,7 +25,7 @@ export function VisioWireframe() {
         .insert([
           {
             titre: `Réunion Visio - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
-            type: 'visio',
+            type_mode: 'visio',
             statut: 'en_attente',
           },
         ])
