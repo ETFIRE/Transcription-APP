@@ -103,7 +103,7 @@ app.post('/api/reunions/creer', async (req, res) => {
 });
 
 // ----------------------------------------------------
-// 2. ROUTE DE CLÔTURE DE RÉUNION ET LANCEMENT EGRESS
+// 2. ROUTE DE CLÔTURE DE RÉUNION ET LANCEMENT EGRESS / N8N
 // ----------------------------------------------------
 app.post('/api/reunions/terminer', async (req, res) => {
   try {
@@ -125,28 +125,57 @@ app.post('/api/reunions/terminer', async (req, res) => {
     }
 
     const roomName = reunion.chime_meeting_id;
+    let egressId = null;
 
-    // 2. Configuration et démarrage de l'Egress
-    const output = new EncodedFileOutput({
-      fileType: EncodedFileType.MP4,
-      filepath: `recordings/${roomName}.mp4`,
-    });
+    // 2. Tentative de lancement Egress avec fallback n8n direct
+    try {
+      const output = new EncodedFileOutput({
+        fileType: EncodedFileType.MP4,
+        filepath: `recordings/${roomName}.mp4`,
+      });
 
-    const info = await egressClient.startRoomCompositeEgress(roomName, {
-      file: output,
-    });
+      const info = await egressClient.startRoomCompositeEgress(roomName, {
+        file: output,
+      });
+      egressId = info.egressId;
+      console.log(`Egress démarré pour ${roomName} (ID: ${egressId})`);
 
-    console.log(`Egress démarré pour ${roomName} (ID: ${info.egressId})`);
+      await supabase
+        .from('reunions')
+        .update({ statut: 'en_cours_finalisation' })
+        .eq('id', reunion_id);
+    } catch (egressErr) {
+      console.warn('Egress non configuré ou indisponible :', egressErr.message);
+      console.log('Déclenchement direct du workflow n8n...');
 
-    // 3. Mise à jour du statut dans Supabase
-    await supabase
-      .from('reunions')
-      .update({ statut: 'en_cours_finalisation' })
-      .eq('id', reunion_id);
+      await supabase
+        .from('reunions')
+        .update({ statut: 'en_traitement' })
+        .eq('id', reunion_id);
 
-    return res.json({ success: true, egress_id: info.egressId });
+      const n8nWebhookUrl =
+        process.env.N8N_WEBHOOK_URL ||
+        'https://n8n-production-88b79.up.railway.app/webhook/v1/meeting/process';
+
+      try {
+        await fetch(n8nWebhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenant_id: reunion.tenant_id,
+            reunion_id: reunion.id,
+            audio_url: null,
+          }),
+        });
+        console.log('Pipeline n8n notifié avec succès (mode direct) !');
+      } catch (n8nErr) {
+        console.error('Erreur appel n8n :', n8nErr.message);
+      }
+    }
+
+    return res.json({ success: true, egress_id: egressId });
   } catch (err) {
-    console.error('Erreur fin réunion / Egress :', err);
+    console.error('Erreur générale fin de réunion :', err);
     return res.status(500).json({ error: err.message || String(err) });
   }
 });
@@ -159,7 +188,6 @@ app.post('/api/webhooks/livekit', async (req, res) => {
     const authHeader = req.get('Authorization');
     let event;
 
-    // Validation de signature si le header existe, sinon mode simulation locale
     if (authHeader) {
       const rawBody = req.body.toString();
       event = await webhookReceiver.receive(rawBody, authHeader);
@@ -177,7 +205,6 @@ app.post('/api/webhooks/livekit', async (req, res) => {
 
       console.log(`Enregistrement finalisé pour la room : ${roomName}`);
 
-      // 1. Récupération de la réunion dans Supabase
       const { data: reunion, error } = await supabase
         .from('reunions')
         .select('id, tenant_id')
@@ -191,7 +218,6 @@ app.post('/api/webhooks/livekit', async (req, res) => {
 
       const fileUrl = fileResult?.location || fileResult?.filename;
 
-      // 2. Mise à jour du statut dans Supabase
       await supabase
         .from('reunions')
         .update({ statut: 'en_traitement' })
@@ -199,10 +225,9 @@ app.post('/api/webhooks/livekit', async (req, res) => {
 
       console.log(`Réunion ${reunion.id} passée au statut "en_traitement"`);
 
-      // 3. Appel du workflow n8n
       const n8nWebhookUrl =
         process.env.N8N_WEBHOOK_URL ||
-        'http://localhost:5678/webhook/v1/meeting/process';
+        'https://n8n-production-88b79.up.railway.app/webhook/v1/meeting/process';
       console.log('Déclenchement du pipeline n8n...');
 
       try {
@@ -217,10 +242,7 @@ app.post('/api/webhooks/livekit', async (req, res) => {
         });
         console.log('Pipeline n8n notifié avec succès !');
       } catch (n8nErr) {
-        console.warn(
-          'n8n non joignable (serveur éteint ou mauvaise URL) :',
-          n8nErr.message
-        );
+        console.warn('Erreur appel n8n :', n8nErr.message);
       }
     }
 
