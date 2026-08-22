@@ -1,3 +1,11 @@
+const cors = require('cors');
+// Autoriser toutes les origines (ou localhost:3000)
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 import express from 'express';
 import dotenv from 'dotenv';
 import { AccessToken, WebhookReceiver } from 'livekit-server-sdk';
