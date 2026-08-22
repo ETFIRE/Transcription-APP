@@ -1,7 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { AccessToken, WebhookReceiver } from 'livekit-server-sdk';
+import {
+  AccessToken,
+  WebhookReceiver,
+  EgressClient,
+  EncodedFileOutput,
+  EncodedFileType,
+} from 'livekit-server-sdk';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 
@@ -9,12 +15,14 @@ dotenv.config();
 
 const app = express();
 
-// Configuration CORS (autorise les requêtes de ton frontend local et de production)
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+// Configuration CORS
+app.use(
+  cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
 
 // Middleware raw pour la validation de signature LiveKit
 app.use(express.raw({ type: 'application/webhook+json' }));
@@ -27,8 +35,10 @@ const supabase = createClient(
 
 const apiKey = process.env.LIVEKIT_API_KEY || 'devkey';
 const apiSecret = process.env.LIVEKIT_API_SECRET || 'secret';
+const livekitHost = process.env.LIVEKIT_URL || 'https://transcription-482gjg4c.livekit.cloud';
 
 const webhookReceiver = new WebhookReceiver(apiKey, apiSecret);
+const egressClient = new EgressClient(livekitHost, apiKey, apiSecret);
 
 // ----------------------------------------------------
 // 1. ROUTE DE CRÉATION DE RÉUNION
@@ -45,7 +55,7 @@ app.post('/api/reunions/creer', async (req, res) => {
 
     if (tenantErr || !tenant || tenant.statut_abonnement !== 'active') {
       return res.status(403).json({
-        error: 'Abonnement Stripe inactif ou tenant introuvable.'
+        error: 'Abonnement Stripe inactif ou tenant introuvable.',
       });
     }
 
@@ -53,14 +63,14 @@ app.post('/api/reunions/creer', async (req, res) => {
 
     const at = new AccessToken(apiKey, apiSecret, {
       identity: `user_${crypto.randomUUID().slice(0, 8)}`,
-      name: 'Hôte Réunion'
+      name: 'Hôte Réunion',
     });
-    
+
     at.addGrant({
       roomJoin: true,
       room: roomName,
       canPublish: true,
-      canSubscribe: true
+      canSubscribe: true,
     });
 
     const token = await at.toJwt();
@@ -72,7 +82,7 @@ app.post('/api/reunions/creer', async (req, res) => {
         titre: titre || 'Réunion visio OpenVidu',
         type_mode: 'visio',
         statut: 'en_attente',
-        chime_meeting_id: roomName
+        chime_meeting_id: roomName,
       })
       .select()
       .single();
@@ -84,9 +94,8 @@ app.post('/api/reunions/creer', async (req, res) => {
     return res.json({
       reunion_id: reunion.id,
       sessionId: roomName,
-      token: token
+      token: token,
     });
-
   } catch (error) {
     console.error('Erreur création réunion :', error);
     return res.status(500).json({ error: error.message || String(error) });
@@ -94,13 +103,63 @@ app.post('/api/reunions/creer', async (req, res) => {
 });
 
 // ----------------------------------------------------
-// 2. ROUTE WEBHOOK LIVEKIT / EGRESS
+// 2. ROUTE DE CLÔTURE DE RÉUNION ET LANCEMENT EGRESS
+// ----------------------------------------------------
+app.post('/api/reunions/terminer', async (req, res) => {
+  try {
+    const { reunion_id } = req.body;
+
+    if (!reunion_id) {
+      return res.status(400).json({ error: 'Paramètre reunion_id manquant.' });
+    }
+
+    // 1. Récupération de la réunion
+    const { data: reunion, error: fetchErr } = await supabase
+      .from('reunions')
+      .select('*')
+      .eq('id', reunion_id)
+      .single();
+
+    if (fetchErr || !reunion) {
+      return res.status(404).json({ error: 'Réunion introuvable.' });
+    }
+
+    const roomName = reunion.chime_meeting_id;
+
+    // 2. Configuration et démarrage de l'Egress
+    const output = new EncodedFileOutput({
+      fileType: EncodedFileType.MP4,
+      filepath: `recordings/${roomName}.mp4`,
+    });
+
+    const info = await egressClient.startRoomCompositeEgress(roomName, {
+      file: output,
+    });
+
+    console.log(`Egress démarré pour ${roomName} (ID: ${info.egressId})`);
+
+    // 3. Mise à jour du statut dans Supabase
+    await supabase
+      .from('reunions')
+      .update({ statut: 'en_cours_finalisation' })
+      .eq('id', reunion_id);
+
+    return res.json({ success: true, egress_id: info.egressId });
+  } catch (err) {
+    console.error('Erreur fin réunion / Egress :', err);
+    return res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+// ----------------------------------------------------
+// 3. ROUTE WEBHOOK LIVEKIT / EGRESS
 // ----------------------------------------------------
 app.post('/api/webhooks/livekit', async (req, res) => {
   try {
     const authHeader = req.get('Authorization');
     let event;
 
+    // Validation de signature si le header existe, sinon mode simulation locale
     if (authHeader) {
       const rawBody = req.body.toString();
       event = await webhookReceiver.receive(rawBody, authHeader);
@@ -118,6 +177,7 @@ app.post('/api/webhooks/livekit', async (req, res) => {
 
       console.log(`Enregistrement finalisé pour la room : ${roomName}`);
 
+      // 1. Récupération de la réunion dans Supabase
       const { data: reunion, error } = await supabase
         .from('reunions')
         .select('id, tenant_id')
@@ -131,6 +191,7 @@ app.post('/api/webhooks/livekit', async (req, res) => {
 
       const fileUrl = fileResult?.location || fileResult?.filename;
 
+      // 2. Mise à jour du statut dans Supabase
       await supabase
         .from('reunions')
         .update({ statut: 'en_traitement' })
@@ -138,7 +199,10 @@ app.post('/api/webhooks/livekit', async (req, res) => {
 
       console.log(`Réunion ${reunion.id} passée au statut "en_traitement"`);
 
-      const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/v1/meeting/process';
+      // 3. Appel du workflow n8n
+      const n8nWebhookUrl =
+        process.env.N8N_WEBHOOK_URL ||
+        'http://localhost:5678/webhook/v1/meeting/process';
       console.log('Déclenchement du pipeline n8n...');
 
       try {
@@ -148,12 +212,15 @@ app.post('/api/webhooks/livekit', async (req, res) => {
           body: JSON.stringify({
             tenant_id: reunion.tenant_id,
             reunion_id: reunion.id,
-            audio_url: fileUrl
-          })
+            audio_url: fileUrl,
+          }),
         });
         console.log('Pipeline n8n notifié avec succès !');
       } catch (n8nErr) {
-        console.warn('n8n non joignable (serveur éteint ou mauvaise URL) :', n8nErr.message);
+        console.warn(
+          'n8n non joignable (serveur éteint ou mauvaise URL) :',
+          n8nErr.message
+        );
       }
     }
 
