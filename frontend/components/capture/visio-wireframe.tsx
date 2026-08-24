@@ -80,6 +80,8 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
     }
   }
 
+  if (saving) return;
+  
   const handleLeave = async () => {
     setSaving(true)
     try {
@@ -176,6 +178,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
           serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
           data-lk-theme="default"
           style={{ height: '100%' }}
+          onDisconnected={handleLeave}
         >
           <VideoConference />
           <RoomAudioRenderer />

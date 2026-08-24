@@ -150,8 +150,10 @@ export default function MeetingReportPage() {
   const meeting = {
     id: meetingData.id,
     title: meetingData.titre || 'Compte-rendu de réunion',
-    date: meetingData.cree_le ? new Date(meetingData.cree_le).toLocaleDateString('fr-FR') : 'Aujourd\'hui',
-    duration: meetingData.duree_secondes ? `${Math.round(meetingData.duree_secondes / 60)} min` : '0 min',
+    date: meetingData.cree_le || new Date().toISOString(),
+    duration: meetingData.duree_secondes || 0,
+    type: meetingData.type_mode || 'visio', 
+    mode: meetingData.type_mode || 'visio',
     status: meetingData.statut,
     summary: analysisData?.resume || 'Aucune synthèse générée.',
     transcript: Array.isArray(transcriptions) ? transcriptions.map((t) => ({
