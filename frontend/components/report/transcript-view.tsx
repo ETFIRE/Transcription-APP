@@ -11,32 +11,45 @@ const avatarTones = [
 ]
 
 export function TranscriptView({ meeting }: { meeting: Meeting }) {
-  const speakerIndex = new Map(meeting.participants.map((p, i) => [p.id, i]))
+  // Sécurisation : on gère les cas où la prop s'appelle 'segments' ou 'transcript'
+  const segments = meeting?.segments || (meeting as any)?.transcript || []
+  const participants = meeting?.participants || []
+  
+  const speakerIndex = new Map(participants.map((p: any, i: number) => [p.id, i]))
 
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold">Transcript</h3>
-          <span className="text-xs text-muted-foreground">{meeting.segments.length} segments · diarized</span>
+          <span className="text-xs text-muted-foreground">{segments.length} segments · diarized</span>
         </div>
       </CardHeader>
       <CardContent>
         <ol className="space-y-5">
-          {meeting.segments.map((seg) => {
-            const speaker = meeting.participants.find((p) => p.id === seg.speakerId)
+          {segments.map((seg: any, index: number) => {
+            const speaker = participants.find((p: any) => p.id === seg.speakerId)
             const idx = speakerIndex.get(seg.speakerId) ?? 0
+            
+            // Format de temps compatible avec les deux structures (mock / production n8n)
+            const displayTime = seg.start 
+              ? formatClock(seg.start) 
+              : (seg.time || '0:00')
+
+            // Nom du speaker (fallback sur la chaine directe si speakerId ne correspond à rien)
+            const speakerName = speaker?.name || seg.speaker || 'Intervenant'
+
             return (
-              <li key={seg.id} className="flex gap-3">
+              <li key={seg.id || index} className="flex gap-3">
                 <span
                   className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarTones[idx % avatarTones.length]}`}
                 >
-                  {speaker?.initials ?? '??'}
+                  {speaker?.initials || speakerName.substring(0, 2).toUpperCase()}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium">{speaker?.name ?? 'Unknown'}</span>
-                    <span className="font-mono text-xs text-muted-foreground">{formatClock(seg.start)}</span>
+                    <span className="text-sm font-medium">{speakerName}</span>
+                    <span className="font-mono text-xs text-muted-foreground">{displayTime}</span>
                     {seg.tone && <ToneBadge tone={seg.tone} className="text-[10px]" />}
                   </div>
                   <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{seg.text}</p>
@@ -44,6 +57,9 @@ export function TranscriptView({ meeting }: { meeting: Meeting }) {
               </li>
             )
           })}
+          {segments.length === 0 && (
+            <p className="text-sm text-muted-foreground">Aucune transcription disponible pour le moment.</p>
+          )}
         </ol>
       </CardContent>
     </Card>
