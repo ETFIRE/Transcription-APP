@@ -1,7 +1,7 @@
 'use client'
 
 import '@livekit/components-styles'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   LiveKitRoom,
@@ -24,6 +24,10 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Références pour l'enregistrement audio local
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+
   const roomName = 'salon-principal'
 
   useEffect(() => {
@@ -37,6 +41,9 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
 
         if (!res.ok) throw new Error(data.error || 'Impossible d\'obtenir le token LiveKit')
         setToken(data.token)
+
+        // Démarrer l'enregistrement de la voix dès que le token est récupéré
+        startLocalRecording()
       } catch (err: any) {
         setError(err.message)
       } finally {
@@ -45,15 +52,67 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
     }
 
     fetchToken()
+
+    // Nettoyage si on quitte la page violemment
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop()
+      }
+    }
   }, [])
+
+  const startLocalRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = mediaRecorder
+      audioChunksRef.current = []
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+
+      mediaRecorder.start(1000) // Capture les morceaux toutes les secondes
+    } catch (err) {
+      console.error("Erreur d'accès au micro pour l'enregistrement:", err)
+    }
+  }
 
   const handleLeave = async () => {
     setSaving(true)
     try {
+      // 1. Arrêter l'enregistrement audio
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop()
+        // Laisser 500ms au recorder pour finaliser le dernier morceau
+        await new Promise(resolve => setTimeout(resolve, 500)) 
+      }
+
       const tenantId = await getCurrentTenantId()
-
       const finalTitle = title || `Réunion Visio - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+      
+      let audioUrl = null
+      
+      // 2. Créer le fichier audio global et l'uploader sur Supabase
+      if (audioChunksRef.current.length > 0) {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        const fileName = `visio-${Date.now()}.webm`
 
+        const { error: uploadError } = await supabase.storage
+          .from('fichiers_audio')
+          .upload(fileName, audioBlob)
+
+        if (!uploadError) {
+          const { data: publicUrlData } = supabase.storage
+            .from('fichiers_audio')
+            .getPublicUrl(fileName)
+          audioUrl = publicUrlData.publicUrl
+        }
+      }
+
+      // 3. Insérer la réunion en base AVEC l'audio_url pour n8n
       const { data, error: insertError } = await supabase
         .from('reunions')
         .insert([
@@ -62,12 +121,19 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
             type_mode: 'visio',
             statut: 'en_attente',
             tenant_id: tenantId,
+            audio_url: audioUrl // C'est CA qui remplace le sample.mp3 dans n8n !
           },
         ])
         .select('id')
         .single()
 
       if (insertError) throw insertError
+
+      // Couper l'utilisation du micro du navigateur
+      if (mediaRecorderRef.current && mediaRecorderRef.current.stream) {
+        mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop())
+      }
+
       if (data?.id) {
         router.push(`/meetings/${data.id}`)
       }
@@ -92,10 +158,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
         <AlertCircle className="h-8 w-8 text-destructive" />
         <p className="text-sm font-medium text-destructive">{error}</p>
         {onBack && (
-          <button
-            onClick={onBack}
-            className="mt-2 rounded-lg border border-input bg-background px-4 py-2 text-xs font-medium text-foreground hover:bg-accent"
-          >
+          <button onClick={onBack} className="mt-2 rounded-lg border border-input bg-background px-4 py-2 text-xs font-medium text-foreground hover:bg-accent">
             Retour
           </button>
         )}
@@ -120,7 +183,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
       </div>
 
       <div className="flex items-center justify-between border-t border-border/40 bg-card p-4">
-        <span className="text-xs text-muted-foreground">Visioconférence en direct</span>
+        <span className="text-xs text-muted-foreground">Visioconférence en direct (Enregistrement en cours)</span>
         <button
           onClick={handleLeave}
           disabled={saving}
@@ -128,7 +191,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
         >
           {saving ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" /> Finalisation...
+              <Loader2 className="h-4 w-4 animate-spin" /> Finalisation et Envoi...
             </>
           ) : (
             <>
