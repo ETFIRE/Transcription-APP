@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { PageHeader } from '@/components/page-header'
 import { ConsentScreen } from '@/components/capture/consent-screen'
 import { DictaphoneRecorder } from '@/components/capture/dictaphone-recorder'
-import { VisioWireframe } from '@/components/capture/visio-wireframe'
+import { VisioCapture } from './visio-wireframe'
 import type { CaptureMode } from '@/lib/types'
 import { Mic, Video, ArrowRight, Check } from 'lucide-react'
 
@@ -138,7 +138,7 @@ export function CaptureFlow() {
           <DictaphoneRecorder title={title} onBack={() => setStep('consent')} />
         )}
         {step === 'capture' && mode === 'video' && (
-          <VisioWireframe title={title} onBack={() => setStep('consent')} />
+          <VisioCapture title={title} onBack={() => setStep('consent')} />
         )}
       </div>
     </div>

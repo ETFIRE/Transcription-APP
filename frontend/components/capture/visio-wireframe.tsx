@@ -1,32 +1,64 @@
 'use client'
 
-import { useState } from 'react'
+import '@livekit/components-styles'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Video, PhoneOff, Users, Loader2, AlertCircle } from 'lucide-react'
+import {
+  LiveKitRoom,
+  VideoConference,
+  RoomAudioRenderer,
+} from '@livekit/components-react'
 import { supabase } from '@/lib/supabase'
 import { getCurrentTenantId } from '@/lib/get-tenant'
+import { Loader2, PhoneOff, AlertCircle } from 'lucide-react'
 
-export function VisioWireframe() {
+interface VisioCaptureProps {
+  title?: string
+  onBack?: () => void
+}
+
+export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureProps) {
   const router = useRouter()
-  const [isInCall, setIsInCall] = useState(true)
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [token, setToken] = useState<string>('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleEndCall = async () => {
-    setIsInCall(false)
-    setIsProcessing(true)
-    setErrorMessage(null)
+  const roomName = 'salon-principal'
 
+  useEffect(() => {
+    async function fetchToken() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        const username = user?.email?.split('@')[0] || `invite_${Math.floor(Math.random() * 1000)}`
+
+        const res = await fetch(`/api/livekit/token?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(username)}`)
+        const data = await res.json()
+
+        if (!res.ok) throw new Error(data.error || 'Impossible d\'obtenir le token LiveKit')
+        setToken(data.token)
+      } catch (err: any) {
+        setError(err.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchToken()
+  }, [])
+
+  const handleLeave = async () => {
+    setSaving(true)
     try {
-      // 1. Insertion de la session visio dans Supabase
       const tenantId = await getCurrentTenantId()
-      const { data, error } = await supabase
+
+      const finalTitle = title || `Réunion Visio - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+
+      const { data, error: insertError } = await supabase
         .from('reunions')
         .insert([
           {
-            titre: `Réunion Visio - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
+            titre: finalTitle,
             type_mode: 'visio',
             statut: 'en_attente',
             tenant_id: tenantId,
@@ -35,72 +67,76 @@ export function VisioWireframe() {
         .select('id')
         .single()
 
-      if (error) throw error
-
+      if (insertError) throw insertError
       if (data?.id) {
-        // 2. Redirection directe vers la page de la réunion réelle
         router.push(`/meetings/${data.id}`)
-      } else {
-        throw new Error('Identifiant de session introuvable.')
       }
     } catch (err: any) {
-      console.error('Erreur lors de la fin de la visio:', err)
-      setErrorMessage(err.message || 'Impossible de finaliser la réunion.')
-      setIsProcessing(false)
-      setIsInCall(true)
+      setError(err.message)
+      setSaving(false)
     }
   }
 
-  return (
-    <Card className="mx-auto max-w-2xl overflow-hidden shadow-xl">
-      <div className="relative aspect-video w-full bg-neutral-900 flex items-center justify-center text-white">
-        <div className="flex flex-col items-center gap-3">
-          <Users className="h-16 w-16 text-neutral-500 animate-pulse" />
-          <p className="text-sm font-medium text-neutral-400">
-            Salon LiveKit connecté — Audio en cours de synchronisation
-          </p>
-        </div>
+  if (loading) {
+    return (
+      <div className="flex h-96 flex-col items-center justify-center gap-3 rounded-xl border border-border bg-card p-6 shadow-sm">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">Connexion à la salle vidéo LiveKit...</p>
+      </div>
+    )
+  }
 
-        <div className="absolute top-4 left-4 flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-xs text-white backdrop-blur">
-          <span className="h-2 w-2 rounded-full bg-green-500 animate-ping" />
-          En direct
-        </div>
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-destructive/20 bg-destructive/10 p-8 text-center">
+        <AlertCircle className="h-8 w-8 text-destructive" />
+        <p className="text-sm font-medium text-destructive">{error}</p>
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="mt-2 rounded-lg border border-input bg-background px-4 py-2 text-xs font-medium text-foreground hover:bg-accent"
+          >
+            Retour
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative flex flex-col overflow-hidden rounded-2xl border border-border bg-black shadow-lg">
+      <div className="h-[550px] w-full">
+        <LiveKitRoom
+          video={true}
+          audio={true}
+          token={token}
+          serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
+          data-lk-theme="default"
+          style={{ height: '100%' }}
+        >
+          <VideoConference />
+          <RoomAudioRenderer />
+        </LiveKitRoom>
       </div>
 
-      <CardContent className="flex flex-col items-center gap-4 p-6 bg-card">
-        {errorMessage && (
-          <div className="flex items-center gap-2 rounded-lg bg-destructive/10 p-3 text-sm text-destructive w-full justify-center">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{errorMessage}</span>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between w-full">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Video className="h-4 w-4" />
-            <span>Enregistrement automatique par piste activé</span>
-          </div>
-
-          <Button
-            variant="destructive"
-            onClick={handleEndCall}
-            disabled={isProcessing}
-            className="gap-2"
-          >
-            {isProcessing ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Génération du rapport...
-              </>
-            ) : (
-              <>
-                <PhoneOff className="h-4 w-4" />
-                Quitter et voir le compte-rendu
-              </>
-            )}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+      <div className="flex items-center justify-between border-t border-border/40 bg-card p-4">
+        <span className="text-xs text-muted-foreground">Visioconférence en direct</span>
+        <button
+          onClick={handleLeave}
+          disabled={saving}
+          className="inline-flex items-center gap-2 rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-white transition hover:bg-destructive/90 disabled:opacity-50"
+        >
+          {saving ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" /> Finalisation...
+            </>
+          ) : (
+            <>
+              <PhoneOff className="h-4 w-4" /> Quitter et générer le compte-rendu
+            </>
+          )}
+        </button>
+      </div>
+    </div>
   )
 }
