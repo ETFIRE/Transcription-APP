@@ -1,96 +1,100 @@
-import { notFound } from 'next/navigation'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { getMeeting } from '@/lib/mock-data'
 import { ReportHeader } from '@/components/report/report-header'
 import { TranscriptView } from '@/components/report/transcript-view'
 import { DecisionsCard, ActionsCard } from '@/components/report/actions-panel'
 import { ParticipantsCard } from '@/components/report/participants-card'
 import { Loader2, Clock } from 'lucide-react'
 
-export const dynamic = 'force-dynamic'
+export default function MeetingReportPage() {
+  const params = useParams()
+  const router = useRouter()
+  const id = params?.id as string
 
-export default async function MeetingReportPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params
+  const [loading, setLoading] = useState(true)
+  const [meetingData, setMeetingData] = useState<any>(null)
+  const [analysisData, setAnalysisData] = useState<any>(null)
+  const [transcriptions, setTranscriptions] = useState<any[]>([])
 
-  let dbMeeting: any = null
-  let dbAnalysis: any = null
-  let dbTranscriptions: any[] = []
+  const loadData = async () => {
+    if (!id) return
 
-  try {
-    // 1. Récupération de la réunion
     const { data: mData } = await supabase
       .from('reunions')
       .select('*')
       .eq('id', id)
       .maybeSingle()
 
-    dbMeeting = mData
+    setMeetingData(mData)
 
-    if (dbMeeting) {
-      // 2. Récupération de l'analyse (résumé, actions, décisions)
+    if (mData) {
       const { data: aData } = await supabase
         .from('analyses_reunion')
         .select('*')
         .eq('reunion_id', id)
         .maybeSingle()
-      dbAnalysis = aData
+      setAnalysisData(aData)
 
-      // 3. Récupération des transcriptions découpées
       const { data: tData } = await supabase
         .from('transcriptions')
         .select('*')
         .eq('reunion_id', id)
         .order('debut_secondes', { ascending: true })
-      dbTranscriptions = tData || []
+      setTranscriptions(tData || [])
     }
-  } catch (e) {
-    console.error('Erreur Supabase:', e)
+    setLoading(false)
   }
 
-  let meeting: any = null
+  useEffect(() => {
+    loadData()
 
-  if (dbMeeting) {
-    // Parser les formats si nécessaire
-    const parseJson = (val: any, fallback: any) => {
-      if (!val) return fallback
-      if (typeof val === 'string') {
-        try { return JSON.parse(val) } catch { return fallback }
+    // Écoute des mises à jour en direct via Supabase Realtime
+    const channel = supabase
+      .channel(`reunion-${id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reunions', filter: `id=eq.${id}` },
+        () => loadData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'analyses_reunion', filter: `reunion_id=eq.${id}` },
+        () => loadData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transcriptions', filter: `reunion_id=eq.${id}` },
+        () => loadData()
+      )
+      .subscribe()
+
+    // Polling de secours toutes les 3 secondes si le statut n'est pas terminé
+    const interval = setInterval(() => {
+      if (meetingData?.statut !== 'termine') {
+        loadData()
       }
-      return val
-    }
+    }, 3000)
 
-    const transcriptFormatted = dbTranscriptions.length > 0
-      ? dbTranscriptions.map((t) => ({
-          speaker: t.label_speaker || 'Intervenant',
-          time: t.debut_secondes ? `${Math.floor(t.debut_secondes / 60)}:${String(Math.floor(t.debut_secondes % 60)).padStart(2, '0')}` : '0:00',
-          text: t.texte || '',
-        }))
-      : []
-
-    meeting = {
-      id: dbMeeting.id,
-      title: dbMeeting.titre || 'Compte-rendu de réunion',
-      date: dbMeeting.cree_le ? new Date(dbMeeting.cree_le).toLocaleDateString('fr-FR') : 'Aujourd\'hui',
-      duration: dbMeeting.duree_secondes ? `${Math.round(dbMeeting.duree_secondes / 60)} min` : '5 min',
-      status: dbMeeting.statut,
-      summary: dbAnalysis?.resume || (dbMeeting.statut === 'en_attente' ? 'Traitement audio et analyse IA en cours...' : 'Aucun résumé disponible.'),
-      transcript: transcriptFormatted,
-      decisions: parseJson(dbAnalysis?.themes, []),
-      actionItems: parseJson(dbAnalysis?.actions, []),
-      participants: [{ name: 'Moi', role: 'Organisateur' }],
-      tone: dbAnalysis?.ton || 'Neutre',
-      themes: parseJson(dbAnalysis?.themes, ['Général']),
+    return () => {
+      supabase.removeChannel(channel)
+      clearInterval(interval)
     }
-  } else {
-    meeting = getMeeting(id)
+  }, [id, meetingData?.statut])
+
+  if (loading) {
+    return (
+      <div className="flex h-96 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    )
   }
 
-  if (!meeting) {
-    notFound()
-  }
+  const isPending = !meetingData || meetingData.statut === 'en_attente' || meetingData.statut === 'en_transcription'
 
-  // Affichage attente si en cours de traitement
-  if (meeting.status === 'en_attente' || (meeting.transcript.length === 0 && !dbAnalysis?.resume)) {
+  if (isPending) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-16 text-center">
         <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card p-12 shadow-sm">
@@ -102,17 +106,43 @@ export default async function MeetingReportPage({ params }: { params: Promise<{ 
             L'enregistrement a bien été reçu. L'IA génère la transcription et la synthèse.
           </p>
           <div className="flex items-center gap-2 rounded-full bg-secondary px-3 py-1 text-xs text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" /> Statut : {meeting.status || 'en_attente'}
+            <Clock className="h-3.5 w-3.5" /> Statut : {meetingData?.statut || 'en_attente'}
           </div>
         </div>
       </div>
     )
   }
 
+  const parseJson = (val: any, fallback: any) => {
+    if (!val) return fallback
+    if (typeof val === 'string') {
+      try { return JSON.parse(val) } catch { return fallback }
+    }
+    return val
+  }
+
+  const meeting = {
+    id: meetingData.id,
+    title: meetingData.titre || 'Compte-rendu de réunion',
+    date: meetingData.cree_le ? new Date(meetingData.cree_le).toLocaleDateString('fr-FR') : 'Aujourd\'hui',
+    duration: meetingData.duree_secondes ? `${Math.round(meetingData.duree_secondes / 60)} min` : '5 min',
+    status: meetingData.statut,
+    summary: analysisData?.resume || 'Synthèse générée avec succès.',
+    transcript: transcriptions.map((t) => ({
+      speaker: t.label_speaker || 'Intervenant',
+      time: t.debut_secondes ? `${Math.floor(t.debut_secondes / 60)}:${String(Math.floor(t.debut_secondes % 60)).padStart(2, '0')}` : '0:00',
+      text: t.texte || '',
+    })),
+    decisions: parseJson(analysisData?.themes, []),
+    actionItems: parseJson(analysisData?.actions, []),
+    participants: [{ name: 'Moi', role: 'Organisateur' }],
+    tone: analysisData?.ton || 'Neutre',
+    themes: parseJson(analysisData?.themes, ['Général']),
+  }
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:py-10">
       <ReportHeader meeting={meeting} />
-
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <TranscriptView meeting={meeting} />
