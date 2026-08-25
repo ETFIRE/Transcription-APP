@@ -2,12 +2,13 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { LayoutDashboard, Mic, History, Menu, X, Plus, Settings, ShieldCheck } from 'lucide-react'
 import { ScribeLogo } from '@/components/scribe-logo'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { supabase } from '@/lib/supabase'
 
 const nav = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -44,6 +45,43 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+  const [userEmail, setUserEmail] = useState('Chargement...')
+
+  useEffect(() => {
+    async function fetchUser() {
+      try {
+        // Récupère ton utilisateur actif ou le premier de la table tenants
+        const { data, error } = await supabase
+          .from('tenants')
+          .select('email')
+          .eq('statut_abonnement', 'active')
+          .single()
+
+        if (data?.email) {
+          setUserEmail(data.email)
+        } else {
+          // Fallback sur le premier profil trouvé
+          const { data: fallback } = await supabase
+            .from('tenants')
+            .select('email')
+            .limit(1)
+            .single()
+          if (fallback?.email) {
+            setUserEmail(fallback.email)
+          } else {
+            setUserEmail('Utilisateur Scribe')
+          }
+        }
+      } catch (err) {
+        setUserEmail('Mon Compte')
+      }
+    }
+    fetchUser()
+  }, [])
+
+  const initials = userEmail !== 'Chargement...' ? userEmail.substring(0, 2).toUpperCase() : 'SC'
+  const displayName = userEmail.includes('@') ? userEmail.split('@')[0] : userEmail
+
   return (
     <div className="flex h-full flex-col gap-6 p-4">
       <div className="px-2 pt-1">
@@ -72,11 +110,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </Link>
         <div className="flex items-center gap-3 rounded-lg border border-sidebar-border bg-card p-3">
           <Avatar className="h-8 w-8">
-            <AvatarFallback className="bg-brand text-brand-foreground text-xs">AC</AvatarFallback>
+            <AvatarFallback className="bg-brand text-brand-foreground text-xs">{initials}</AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">Amelia Chen</p>
-            <p className="truncate text-xs text-muted-foreground">amelia@acme.co</p>
+            <p className="truncate text-sm font-medium capitalize">{displayName}</p>
+            <p className="truncate text-xs text-muted-foreground">{userEmail}</p>
           </div>
         </div>
       </div>
