@@ -10,8 +10,8 @@ import { Button } from '@/components/ui/button'
 import { supabase } from '@/lib/supabase'
 
 export default function SettingsPage() {
-  const [name, setName] = useState('Test')
-  const [email, setEmail] = useState('test@client.com')
+  const [name, setName] = useState('Utilisateur')
+  const [email, setEmail] = useState('')
   const [recordingNotice, setRecordingNotice] = useState(true)
   const [retention, setRetention] = useState('30')
   const [autoDelete, setAutoDelete] = useState(false)
@@ -20,14 +20,20 @@ export default function SettingsPage() {
   useEffect(() => {
     async function loadTenantData() {
       try {
-        const { data, error } = await supabase
-          .from('tenants')
-          .select('email')
-          .eq('email', 'test@client.com')
-          .single()
+        const savedEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+
+        let query = supabase.from('tenants').select('email, mis_a_jour_le')
+        if (savedEmail) {
+          query = query.eq('email', savedEmail)
+        } else {
+          query = query.order('mis_a_jour_le', { ascending: false }).limit(1)
+        }
+
+        const { data, error } = await query.single()
 
         if (data?.email) {
           setEmail(data.email)
+          localStorage.setItem('scribe_email', data.email)
           const derivedName = data.email.split('@')[0]
           setName(derivedName.charAt(0).toUpperCase() + derivedName.slice(1))
         }
@@ -70,7 +76,10 @@ export default function SettingsPage() {
               id="email"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                localStorage.setItem('scribe_email', e.target.value)
+              }}
               placeholder="Your email address"
             />
           </div>

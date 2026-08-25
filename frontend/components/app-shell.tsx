@@ -50,19 +50,28 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   useEffect(() => {
     async function fetchUser() {
       try {
-        // Cibler uniquement le compte actif le plus récent
-        const { data, error } = await supabase
-          .from('tenants')
-          .select('email')
-          .eq('statut_abonnement', 'active')
-          .eq('email', 'test@client.com')
-          .limit(1)
-          .single()
+        const savedEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+
+        let query = supabase.from('tenants').select('email, mis_a_jour_le')
+        if (savedEmail) {
+          query = query.eq('email', savedEmail)
+        } else {
+          query = query.order('mis_a_jour_le', { ascending: false }).limit(1)
+        }
+
+        const { data, error } = await query.single()
 
         if (data?.email) {
           setUserEmail(data.email)
+          localStorage.setItem('scribe_email', data.email)
         } else {
-          setUserEmail('Utilisateur Scribe')
+          const { data: fallback } = await supabase.from('tenants').select('email').limit(1).single()
+          if (fallback?.email) {
+            setUserEmail(fallback.email)
+            localStorage.setItem('scribe_email', fallback.email)
+          } else {
+            setUserEmail('Utilisateur Scribe')
+          }
         }
       } catch (err) {
         setUserEmail('Mon Compte')
