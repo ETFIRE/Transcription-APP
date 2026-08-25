@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Loader2, Calendar, Clock, CheckSquare, Hammer } from 'lucide-react'
@@ -8,6 +9,7 @@ import { CheckoutButton } from '@/components/billing/checkout-button'
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
+  const router = useRouter()
   const [stats, setStats] = useState({
     totalMeetings: 0,
     totalHours: 0,
@@ -20,6 +22,14 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchDashboardData() {
       try {
+        const userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+
+        if (!userEmail) {
+          router.push('/signin')
+          return
+        }
+
+        // Récupérer uniquement les réunions liées à l'e-mail connecté
         const { data: meetings, error } = await supabase
           .from('reunions')
           .select(`
@@ -31,9 +41,13 @@ export default function DashboardPage() {
               actions
             )
           `)
+          .eq('email', userEmail)
 
         if (error) throw error
-        if (!meetings) return
+        if (!meetings) {
+          setLoading(false)
+          return
+        }
 
         let seconds = 0
         let openActs = 0
@@ -96,7 +110,7 @@ export default function DashboardPage() {
     }
 
     fetchDashboardData()
-  }, [])
+  }, [router])
 
   if (loading) {
     return (
@@ -203,7 +217,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Aucun thème détecté pour le moment.</p>
+              <p className="text-sm text-muted-foreground">Aucune réunion enregistrée pour le moment.</p>
             )}
           </CardContent>
         </Card>
