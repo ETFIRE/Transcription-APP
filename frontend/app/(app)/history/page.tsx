@@ -1,20 +1,39 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Loader2, Video, Mic, Clock, CheckSquare, ArrowUpRight } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Loader2, Calendar, Clock, Video, CheckSquare } from 'lucide-react'
 
 export default function HistoryPage() {
-  const [meetings, setMeetings] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [meetings, setMeetings] = useState<any[]>([])
+  const router = useRouter()
 
   useEffect(() => {
     async function fetchHistory() {
       try {
-        // On récupère les réunions et on joint la table des analyses
+        const userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+
+        if (!userEmail) {
+          router.push('/signin')
+          return
+        }
+
+        // 1. Récupérer le tenant_id de l'utilisateur connecté
+        const { data: tenant, error: tenantError } = await supabase
+          .from('tenants')
+          .select('id')
+          .eq('email', userEmail)
+          .single()
+
+        if (tenantError || !tenant) {
+          setLoading(false)
+          return
+        }
+
+        // 2. Récupérer uniquement les réunions liées à ce tenant_id
         const { data, error } = await supabase
           .from('reunions')
           .select(`
@@ -26,21 +45,29 @@ export default function HistoryPage() {
               actions
             )
           `)
+          .eq('tenant_id', tenant.id)
           .order('cree_le', { ascending: false })
 
         if (error) throw error
         setMeetings(data || [])
-      } catch (error) {
-        console.error("Erreur lors de la récupération de l'historique:", error)
+      } catch (err) {
+        console.error("Erreur chargement historique:", err)
       } finally {
         setLoading(false)
       }
     }
 
     fetchHistory()
-  }, [])
+  }, [router])
 
-  // Fonction sécurisée pour lire les listes JSON (actions, thèmes)
+  if (loading) {
+    return (
+      <div className="flex h-[50vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    )
+  }
+
   const parseJsonArray = (val: any) => {
     if (!val) return []
     if (Array.isArray(val)) return val
@@ -53,95 +80,63 @@ export default function HistoryPage() {
     return []
   }
 
-  if (loading) {
-    return (
-      <div className="flex h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    )
-  }
-
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-8">
         <h1 className="text-2xl font-bold">History</h1>
-        <p className="text-muted-foreground">{meetings.length} meetings</p>
+        <p className="text-muted-foreground">{meetings.length} meetings recorded</p>
       </div>
 
       {meetings.length === 0 ? (
-        <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-border text-muted-foreground">
-          Aucune réunion enregistrée pour le moment.
-        </div>
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-lg font-medium">Aucune réunion enregistrée</p>
+            <p className="text-sm text-muted-foreground">Vos futurs comptes rendus apparaîtront ici.</p>
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {meetings.map((meeting) => {
-            // Supabase renvoie un tableau pour les jointures, on prend le premier élément
-            const analysis = Array.isArray(meeting.analyses_reunion) 
-              ? meeting.analyses_reunion[0] 
-              : meeting.analyses_reunion
-              
-            const actions = parseJsonArray(analysis?.actions)
+          {meetings.map((m) => {
+            const analysis = Array.isArray(m.analyses_reunion) ? m.analyses_reunion[0] : m.analyses_reunion
             const themes = parseJsonArray(analysis?.themes)
-            const openActions = actions.filter((a: any) => a?.status !== 'done').length
+            const actions = parseJsonArray(analysis?.actions)
+            const openActionsCount = actions.filter((a: any) => a?.status !== 'done').length
+            const dateFormatted = m.cree_le ? new Date(m.cree_le).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Date inconnue'
 
             return (
-              <Link href={`/meetings/${meeting.id}`} key={meeting.id}>
-                <Card className="group relative flex h-full cursor-pointer flex-col transition-colors hover:border-primary/50 hover:bg-muted/50">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(meeting.cree_le).toLocaleDateString('fr-FR', {
-                            year: 'numeric',
-                            month: 'short',
-                            day: 'numeric'
-                          })}
-                        </p>
-                        <h3 className="font-semibold leading-none tracking-tight line-clamp-1">
-                          {meeting.titre || 'Réunion sans titre'}
-                        </h3>
-                      </div>
-                      <ArrowUpRight className="h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                    </div>
-                  </CardHeader>
-                  
-                  <CardContent className="flex flex-1 flex-col justify-between gap-4">
-                    <p className="line-clamp-3 text-sm text-muted-foreground">
-                      {analysis?.resume || 'Traitement IA en cours ou aucune synthèse générée...'}
-                    </p>
+              <Card key={m.id} className="flex flex-col justify-between">
+                <CardHeader className="space-y-1">
+                  <p className="text-xs text-muted-foreground">{dateFormatted}</p>
+                  <CardTitle className="text-lg font-semibold truncate">{m.titre || 'Sans titre'}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-muted-foreground line-clamp-3">
+                    {analysis?.resume || 'Traitement IA en cours ou aucune synthèse générée...'}
+                  </p>
 
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap gap-2">
-                        {analysis?.ton && (
-                          <Badge variant="secondary" className="bg-primary/10 text-primary hover:bg-primary/20 capitalize">
-                            {analysis.ton}
-                          </Badge>
-                        )}
-                        {themes.slice(0, 2).map((theme: string, i: number) => (
-                          <Badge key={i} variant="outline" className="bg-background capitalize">
-                            {theme}
-                          </Badge>
-                        ))}
-                        <Badge variant="outline" className="gap-1 bg-background">
-                          {meeting.type_mode === 'visio' ? <Video className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
-                          {meeting.type_mode === 'visio' ? 'Visio' : 'Dictaphone'}
-                        </Badge>
-                      </div>
-
-                      <div className="flex items-center gap-4 border-t border-border/50 pt-4 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <Clock className="h-3.5 w-3.5" />
-                          {meeting.duree_secondes ? Math.round(meeting.duree_secondes / 60) : 0}m
+                  {themes.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {themes.slice(0, 3).map((t: string, idx: number) => (
+                        <span key={idx} className="text-xs bg-secondary px-2 py-0.5 rounded-md text-secondary-foreground">
+                          {t}
                         </span>
-                        <span className="flex items-center gap-1.5">
-                          <CheckSquare className="h-3.5 w-3.5" />
-                          {openActions} open
-                        </span>
-                      </div>
+                      ))}
                     </div>
-                  </CardContent>
-                </Card>
-              </Link>
+                  )}
+
+                  <div className="flex items-center justify-between pt-2 border-t text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5" />
+                      {Math.round((m.duree_secondes || 0) / 60)} min
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <CheckSquare className="h-3.5 w-3.5" />
+                      {openActionsCount} open actions
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
             )
           })}
         </div>
