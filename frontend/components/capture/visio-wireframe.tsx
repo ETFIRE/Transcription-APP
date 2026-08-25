@@ -41,7 +41,6 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
         if (!res.ok) throw new Error(data.error || 'Impossible d\'obtenir le token LiveKit')
         setToken(data.token)
 
-        // Démarrer l'enregistrement de la voix dès que le token est récupéré
         startLocalRecording()
       } catch (err: any) {
         setError(err.message)
@@ -83,19 +82,26 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
   const handleLeave = async () => {
     setSaving(true)
     try {
-      // 1. Arrêter l'enregistrement audio
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop()
         await new Promise(resolve => setTimeout(resolve, 500)) 
       }
 
-      // 2. Récupérer le bon tenant_id basé sur l'e-mail du localStorage (test@final.fr)
-      const userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+      // 1. Récupérer l'e-mail (localStorage ou fallback Supabase Auth)
+      let userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
 
       if (!userEmail) {
-        throw new Error("Aucun utilisateur connecté trouvé dans le stockage local.")
+        const { data: { user } } = await supabase.auth.getUser()
+        userEmail = user?.email || null
       }
 
+      if (!userEmail) {
+        throw new Error("Aucun utilisateur connecté trouvé. Veuillez vous reconnecter.")
+      }
+
+      userEmail = userEmail.trim()
+
+      // 2. Récupérer le tenant_id associé
       const { data: tenant, error: tenantError } = await supabase
         .from('tenants')
         .select('id')
@@ -103,7 +109,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
         .single()
 
       if (tenantError || !tenant) {
-        throw new Error("Impossible de trouver le tenant correspondant à votre e-mail.")
+        throw new Error(`Impossible de trouver le tenant pour l'e-mail : ${userEmail}`)
       }
 
       const tenantId = tenant.id
@@ -111,7 +117,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
       
       let audioUrl = null
       
-      // 3. Créer le fichier audio global et l'uploader sur Supabase
+      // 3. Uploader le fichier audio sur Supabase Storage
       if (audioChunksRef.current.length > 0) {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         const fileName = `visio-${Date.now()}.webm`
