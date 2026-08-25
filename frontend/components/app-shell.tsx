@@ -50,27 +50,19 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   useEffect(() => {
     async function fetchUser() {
       try {
-        // Récupère ton utilisateur actif ou le premier de la table tenants
+        // Cibler uniquement le compte actif le plus récent
         const { data, error } = await supabase
           .from('tenants')
           .select('email')
           .eq('statut_abonnement', 'active')
+          .order('mis_a_jour_le', { ascending: false })
+          .limit(1)
           .single()
 
         if (data?.email) {
           setUserEmail(data.email)
         } else {
-          // Fallback sur le premier profil trouvé
-          const { data: fallback } = await supabase
-            .from('tenants')
-            .select('email')
-            .limit(1)
-            .single()
-          if (fallback?.email) {
-            setUserEmail(fallback.email)
-          } else {
-            setUserEmail('Utilisateur Scribe')
-          }
+          setUserEmail('Utilisateur Scribe')
         }
       } catch (err) {
         setUserEmail('Mon Compte')
@@ -79,7 +71,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     fetchUser()
   }, [])
 
-  const initials = userEmail !== 'Chargement...' ? userEmail.substring(0, 2).toUpperCase() : 'SC'
+  const initials = userEmail !== 'Chargement...' && userEmail !== 'Mon Compte' ? userEmail.substring(0, 2).toUpperCase() : 'SC'
   const displayName = userEmail.includes('@') ? userEmail.split('@')[0] : userEmail
 
   return (
