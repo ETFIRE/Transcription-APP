@@ -9,7 +9,6 @@ import {
   RoomAudioRenderer,
 } from '@livekit/components-react'
 import { supabase } from '@/lib/supabase'
-import { getCurrentTenantId } from '@/lib/get-tenant'
 import { Loader2, PhoneOff, AlertCircle } from 'lucide-react'
 
 interface VisioCaptureProps {
@@ -53,7 +52,6 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
 
     fetchToken()
 
-    // Nettoyage si on quitte la page violemment
     return () => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop()
@@ -74,13 +72,13 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
         }
       }
 
-      mediaRecorder.start(1000) // Capture les morceaux toutes les secondes
+      mediaRecorder.start(1000)
     } catch (err) {
       console.error("Erreur d'accès au micro pour l'enregistrement:", err)
     }
   }
 
-  if (saving) return;
+  if (saving) return null;
   
   const handleLeave = async () => {
     setSaving(true)
@@ -88,16 +86,32 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
       // 1. Arrêter l'enregistrement audio
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop()
-        // Laisser 500ms au recorder pour finaliser le dernier morceau
         await new Promise(resolve => setTimeout(resolve, 500)) 
       }
 
-      const tenantId = await getCurrentTenantId()
+      // 2. Récupérer le bon tenant_id basé sur l'e-mail du localStorage (test@final.fr)
+      const userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+
+      if (!userEmail) {
+        throw new Error("Aucun utilisateur connecté trouvé dans le stockage local.")
+      }
+
+      const { data: tenant, error: tenantError } = await supabase
+        .from('tenants')
+        .select('id')
+        .eq('email', userEmail)
+        .single()
+
+      if (tenantError || !tenant) {
+        throw new Error("Impossible de trouver le tenant correspondant à votre e-mail.")
+      }
+
+      const tenantId = tenant.id
       const finalTitle = title || `Réunion Visio - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
       
       let audioUrl = null
       
-      // 2. Créer le fichier audio global et l'uploader sur Supabase
+      // 3. Créer le fichier audio global et l'uploader sur Supabase
       if (audioChunksRef.current.length > 0) {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         const fileName = `visio-${Date.now()}.webm`
@@ -114,7 +128,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
         }
       }
 
-      // 3. Insérer la réunion en base AVEC l'audio_url pour n8n
+      // 4. Insérer la réunion en base avec le bon tenant_id
       const { data, error: insertError } = await supabase
         .from('reunions')
         .insert([
@@ -123,7 +137,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
             type_mode: 'visio',
             statut: 'en_attente',
             tenant_id: tenantId,
-            audio_url: audioUrl // C'est CA qui remplace le sample.mp3 dans n8n !
+            audio_url: audioUrl
           },
         ])
         .select('id')
@@ -131,7 +145,6 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
 
       if (insertError) throw insertError
 
-      // Couper l'utilisation du micro du navigateur
       if (mediaRecorderRef.current && mediaRecorderRef.current.stream) {
         mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop())
       }
@@ -156,7 +169,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-destructive/20 bg-destructive/10 p-8 text-center">
+      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-destructive/25 bg-destructive/10 p-8 text-center">
         <AlertCircle className="h-8 w-8 text-destructive" />
         <p className="text-sm font-medium text-destructive">{error}</p>
         {onBack && (
