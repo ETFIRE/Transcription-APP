@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Loader2, Calendar, Clock, CheckSquare, Hammer } from 'lucide-react'
+import { CheckoutButton } from '@/components/billing/checkout-button'
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
@@ -111,10 +112,12 @@ export default function DashboardPage() {
   const totalActions = stats.actionStatus.open + stats.actionStatus['in-progress'] + stats.actionStatus.done || 1 // Eviter division par zéro
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground">Your meeting intelligence at a glance.</p>
+    <div className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <p className="text-muted-foreground">Your meeting intelligence at a glance.</p>
+        </div>
+        <CheckoutButton />
       </div>
 
       {/* Cartes de statistiques */}
