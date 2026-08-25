@@ -29,8 +29,20 @@ export default function DashboardPage() {
           return
         }
 
-        // Récupérer uniquement les réunions liées à l'e-mail connecté
-        const { data: meetings, error } = await supabase
+        // 1. Récupérer le tenant_id correspondant à l'e-mail connecté
+        const { data: tenant, error: tenantError } = await supabase
+          .from('tenants')
+          .select('id')
+          .eq('email', userEmail)
+          .single()
+
+        if (tenantError || !tenant) {
+          setLoading(false)
+          return
+        }
+
+        // 2. Récupérer uniquement les réunions liées à ce tenant_id
+        const { data: meetings, error: meetingsError } = await supabase
           .from('reunions')
           .select(`
             *,
@@ -41,9 +53,9 @@ export default function DashboardPage() {
               actions
             )
           `)
-          .eq('email', userEmail)
+          .eq('tenant_id', tenant.id)
 
-        if (error) throw error
+        if (meetingsError) throw meetingsError
         if (!meetings) {
           setLoading(false)
           return
