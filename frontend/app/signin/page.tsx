@@ -11,12 +11,13 @@ import { supabase } from '@/lib/supabase'
 
 export default function SignInPage() {
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!email) return
+    if (!email || !password) return
     setLoading(true)
 
     try {
@@ -27,22 +28,35 @@ export default function SignInPage() {
         .eq('email', email)
         .single()
 
-      // 2. Si le tenant n'existe pas, on le crée automatiquement
+      // 2. Si le tenant n'existe pas, on le crée avec son mot de passe
       if (!tenant) {
         const { data: newTenant, error: insertError } = await supabase
           .from('tenants')
-          .insert([{ email, statut_abonnement: 'inactive' }])
+          .insert([{ email, password, statut_abonnement: 'inactive' }])
           .select()
           .single()
 
         if (insertError) throw insertError
         tenant = newTenant
+      } else {
+        // 3. Si le tenant existe, on vérifie le mot de passe (si renseigné en BDD)
+        if (tenant.password && tenant.password !== password) {
+          alert('Mot de passe incorrect.')
+          setLoading(false)
+          return
+        } else if (!tenant.password) {
+          // Si le compte existait sans mot de passe, on l'actualise
+          await supabase
+            .from('tenants')
+            .update({ password })
+            .eq('email', email)
+        }
       }
 
-      // 3. Stocke l'e-mail actif dans le navigateur
+      // 4. Stocke l'e-mail actif dans le navigateur
       localStorage.setItem('scribe_email', tenant.email)
 
-      // 4. Redirige vers le dashboard
+      // 5. Redirige vers le dashboard
       router.push('/dashboard')
     } catch (err) {
       console.error('Erreur de connexion:', err)
@@ -60,7 +74,7 @@ export default function SignInPage() {
             <ScribeLogo />
           </div>
           <CardTitle className="text-2xl">Sign in to Scribe</CardTitle>
-          <CardDescription>Enter your email address to access your workspace</CardDescription>
+          <CardDescription>Enter your email and password to access your workspace</CardDescription>
         </CardHeader>
         <form onSubmit={handleSignIn}>
           <CardContent className="space-y-4">
@@ -75,10 +89,21 @@ export default function SignInPage() {
                 required
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
           </CardContent>
           <CardFooter>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Connecting...' : 'Continue with Email'}
+              {loading ? 'Authenticating...' : 'Sign In / Register'}
             </Button>
           </CardFooter>
         </form>
