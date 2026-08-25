@@ -1,159 +1,128 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
-import { getCurrentTenantId } from '@/lib/get-tenant'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Mic, Square, Loader2, AlertCircle } from 'lucide-react'
+import { Loader2, Mic, Square, ArrowLeft } from 'lucide-react'
 
 interface DictaphoneRecorderProps {
-  title?: string
-  onBack?: () => void
+  title: string
+  onBack: () => void
 }
 
-export function DictaphoneRecorder({ title = 'Réunion', onBack }: DictaphoneRecorderProps) {
-  const router = useRouter()
-  const [isRecording, setIsRecording] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [time, setTime] = useState(0)
-  
+export function DictaphoneRecorder({ title, onBack }: DictaphoneRecorderProps) {
+  const [recording, setRecording] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
-  const timerRef = useRef<NodeJS.Timeout | null>(null)
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop()
-      }
-    }
-  }, [])
+  const router = useRouter()
 
   const startRecording = async () => {
+    audioChunksRef.current = []
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mediaRecorder = new MediaRecorder(stream)
       mediaRecorderRef.current = mediaRecorder
-      audioChunksRef.current = []
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data)
-      }
-
-      mediaRecorder.start(1000)
-      setIsRecording(true)
-      
-      timerRef.current = setInterval(() => {
-        setTime((prev) => prev + 1)
-      }, 1000)
-    } catch (err) {
-      setError("Impossible d'accéder au microphone.")
-    }
-  }
-
-  const stopRecordingAndSave = async () => {
-    if (!mediaRecorderRef.current) return
-    
-    setIsRecording(false)
-    setSaving(true)
-    if (timerRef.current) clearInterval(timerRef.current)
-
-    mediaRecorderRef.current.stop()
-    // Laisser le temps au dernier chunk de s'ajouter
-    await new Promise(resolve => setTimeout(resolve, 500))
-
-    try {
-      const tenantId = await getCurrentTenantId()
-      const finalTitle = title || `Enregistrement vocal - ${new Date().toLocaleDateString()}`
-      let audioUrl = null
-
-      if (audioChunksRef.current.length > 0) {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-        const fileName = `dictaphone-${Date.now()}.webm`
-
-        const { error: uploadError } = await supabase.storage
-          .from('fichiers_audio')
-          .upload(fileName, audioBlob)
-
-        if (!uploadError) {
-          const { data } = supabase.storage.from('fichiers_audio').getPublicUrl(fileName)
-          audioUrl = data.publicUrl
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
         }
       }
 
-      const { data, error: insertError } = await supabase
-        .from('reunions')
-        .insert([{
-            titre: finalTitle,
-            type_mode: 'presentiel',
-            statut: 'en_attente',
-            tenant_id: tenantId,
-            duree_secondes: time,
-            audio_url: audioUrl
-        }])
-        .select('id')
-        .single()
-
-      if (insertError) throw insertError
-
-      // Couper l'utilisation du micro
-      if (mediaRecorderRef.current && mediaRecorderRef.current.stream) {
-        mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop())
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        setAudioBlob(blob)
       }
 
-      if (data?.id) router.push(`/meetings/${data.id}`)
-      
-    } catch (err: any) {
-      setError(err.message)
-      setSaving(false)
+      mediaRecorder.start()
+      setRecording(true)
+    } catch (err) {
+      console.error("Erreur accès micro:", err)
     }
   }
 
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60)
-    const s = seconds % 60
-    return `${m}:${s.toString().padStart(2, '0')}`
+  const stopRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop()
+      setRecording(false)
+    }
+  }
+
+  const handleSubmit = async () => {
+    if (!audioBlob) return
+    setSubmitting(true)
+
+    try {
+      // 1. Récupération de l'e-mail du compte connecté dans le localStorage
+      const userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : ''
+
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'recording.webm')
+      formData.append('titre', title)
+      formData.append('type', 'dictaphone')
+      
+      // 2. Transmission indispensable de l'e-mail pour que n8n cible le bon tenant_id
+      formData.append('email', userEmail || '')
+
+      // URL de ton webhook n8n (via variable d'environnement ou en dur)
+      const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || 'TON_URL_WEBHOOK_N8N'
+
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) throw new Error("Erreur lors de l'envoi de la capture")
+
+      // Redirection propre vers le dashboard
+      router.push('/dashboard')
+    } catch (err) {
+      console.error("Erreur:", err)
+      setSubmitting(false)
+    }
   }
 
   return (
-    <Card className="mx-auto max-w-md border-border bg-card shadow-sm">
-      <CardContent className="flex flex-col items-center justify-center p-10 text-center">
-        {error ? (
-          <div className="flex flex-col items-center gap-3 text-destructive">
-            <AlertCircle className="h-8 w-8" />
-            <p className="text-sm">{error}</p>
-            {onBack && <Button variant="outline" onClick={onBack} className="mt-4">Retour</Button>}
-          </div>
-        ) : saving ? (
-          <div className="flex flex-col items-center gap-4 text-primary">
-            <Loader2 className="h-10 w-10 animate-spin" />
-            <p className="text-sm font-medium">Finalisation de l'enregistrement...</p>
-          </div>
-        ) : (
-          <>
-            <div className={`mb-8 flex h-24 w-24 items-center justify-center rounded-full ${isRecording ? 'animate-pulse bg-destructive/10 text-destructive' : 'bg-primary/10 text-primary'}`}>
-              <Mic className="h-10 w-10" />
-            </div>
-            <div className="mb-8 font-mono text-4xl font-light tracking-tighter text-foreground">
-              {formatTime(time)}
-            </div>
-            
-            {!isRecording ? (
-              <Button onClick={startRecording} size="lg" className="w-full max-w-[200px] rounded-full gap-2">
-                <Mic className="h-4 w-4" /> Commencer
+    <div className="space-y-6">
+      <Button variant="ghost" onClick={onBack} className="gap-2">
+        <ArrowLeft className="h-4 w-4" /> Retour
+      </Button>
+
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center py-12 space-y-6">
+          <h2 className="text-xl font-semibold">{title}</h2>
+
+          {!recording && !audioBlob && (
+            <Button onClick={startRecording} size="lg" className="gap-2 bg-red-600 hover:bg-red-700 text-white">
+              <Mic className="h-5 w-5" /> Démarrer l'enregistrement
+            </Button>
+          )}
+
+          {recording && (
+            <Button onClick={stopRecording} size="lg" variant="destructive" className="gap-2 animate-pulse">
+              <Square className="h-5 w-5" /> Arrêter l'enregistrement
+            </Button>
+          )}
+
+          {audioBlob && !submitting && (
+            <div className="flex flex-col items-center gap-4 w-full max-w-md">
+              <audio controls src={URL.createObjectURL(audioBlob)} className="w-full" />
+              <Button onClick={handleSubmit} size="lg" className="w-full gap-2">
+                Envoyer pour analyse
               </Button>
-            ) : (
-              <Button onClick={stopRecordingAndSave} variant="destructive" size="lg" className="w-full max-w-[200px] rounded-full gap-2">
-                <Square className="h-4 w-4" /> Arrêter et analyser
-              </Button>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
+            </div>
+          )}
+
+          {submitting && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin" /> Analyse en cours...
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   )
 }
