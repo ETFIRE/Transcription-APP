@@ -57,7 +57,6 @@ export default function DashboardPage() {
           seconds += (m.duree_secondes || 0)
           const analysis = Array.isArray(m.analyses_reunion) ? m.analyses_reunion[0] : m.analyses_reunion
 
-          // Traitement des actions
           const actions = parseJsonArray(analysis?.actions)
           actions.forEach((a: any) => {
             const status = a?.status || 'open'
@@ -67,7 +66,6 @@ export default function DashboardPage() {
             else actionCounts.open++
           })
 
-          // Traitement des thèmes/décisions
           const themes = parseJsonArray(analysis?.themes)
           decisions += themes.length
           themes.forEach((t: string) => {
@@ -76,7 +74,6 @@ export default function DashboardPage() {
           })
         })
 
-        // Trier les thèmes par fréquence
         const topThemes = Object.entries(themeMap)
           .map(([name, count]) => ({ name, count }))
           .sort((a, b) => b.count - a.count)
@@ -109,10 +106,11 @@ export default function DashboardPage() {
     )
   }
 
-  const totalActions = stats.actionStatus.open + stats.actionStatus['in-progress'] + stats.actionStatus.done || 1 // Eviter division par zéro
+  const totalActions = stats.actionStatus.open + stats.actionStatus['in-progress'] + stats.actionStatus.done || 1
 
   return (
-    <div className="mb-8 flex items-center justify-between">
+    <div className="mx-auto max-w-6xl px-4 py-8">
+      <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Dashboard</h1>
           <p className="text-muted-foreground">Your meeting intelligence at a glance.</p>
@@ -154,7 +152,6 @@ export default function DashboardPage() {
 
       {/* Panneaux principaux */}
       <div className="grid gap-6 lg:grid-cols-2 mb-8">
-        {/* Graphique des actions (Barres horizontales robustes à la place du donut pour éviter les crashs de librairies externes) */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base font-semibold">Action items status</CardTitle>
@@ -190,7 +187,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Thèmes dominants */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base font-semibold">Dominant themes</CardTitle>
