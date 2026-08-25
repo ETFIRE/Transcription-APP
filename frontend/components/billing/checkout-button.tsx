@@ -14,7 +14,7 @@ export function CheckoutButton() {
       const tenantId = await getCurrentTenantId()
       
       // Remplace par TON vrai Price ID Stripe
-      const priceId = 'price_1234567890abcdef' 
+      const priceId = 'price_1U8FN5GbUbRdrr9C4v3UnCny' 
 
       const response = await fetch('/api/stripe/checkout', {
         method: 'POST',
