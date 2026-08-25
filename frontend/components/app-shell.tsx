@@ -1,9 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
-import { LayoutDashboard, Mic, History, Menu, X, Plus, Settings, ShieldCheck } from 'lucide-react'
+import { LayoutDashboard, Mic, History, Menu, X, Plus, Settings, ShieldCheck, LogOut } from 'lucide-react'
 import { ScribeLogo } from '@/components/scribe-logo'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -46,39 +46,40 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const [userEmail, setUserEmail] = useState('Chargement...')
+  const router = useRouter()
 
   useEffect(() => {
     async function fetchUser() {
       try {
         const savedEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
 
-        let query = supabase.from('tenants').select('email, mis_a_jour_le')
-        if (savedEmail) {
-          query = query.eq('email', savedEmail)
-        } else {
-          query = query.order('mis_a_jour_le', { ascending: false }).limit(1)
+        if (!savedEmail) {
+          router.push('/signin')
+          return
         }
 
-        const { data, error } = await query.single()
+        const { data, error } = await supabase
+          .from('tenants')
+          .select('email')
+          .eq('email', savedEmail)
+          .single()
 
         if (data?.email) {
           setUserEmail(data.email)
-          localStorage.setItem('scribe_email', data.email)
         } else {
-          const { data: fallback } = await supabase.from('tenants').select('email').limit(1).single()
-          if (fallback?.email) {
-            setUserEmail(fallback.email)
-            localStorage.setItem('scribe_email', fallback.email)
-          } else {
-            setUserEmail('Utilisateur Scribe')
-          }
+          setUserEmail(savedEmail)
         }
       } catch (err) {
         setUserEmail('Mon Compte')
       }
     }
     fetchUser()
-  }, [])
+  }, [router])
+
+  const handleSignOut = () => {
+    localStorage.removeItem('scribe_email')
+    router.push('/signin')
+  }
 
   const initials = userEmail !== 'Chargement...' && userEmail !== 'Mon Compte' ? userEmail.substring(0, 2).toUpperCase() : 'SC'
   const displayName = userEmail.includes('@') ? userEmail.split('@')[0] : userEmail
@@ -109,14 +110,26 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <Settings className="h-4 w-4" />
           Settings
         </Link>
-        <div className="flex items-center gap-3 rounded-lg border border-sidebar-border bg-card p-3">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback className="bg-brand text-brand-foreground text-xs">{initials}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium capitalize">{displayName}</p>
-            <p className="truncate text-xs text-muted-foreground">{userEmail}</p>
+        
+        <div className="flex items-center justify-between rounded-lg border border-sidebar-border bg-card p-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <Avatar className="h-8 w-8 shrink-0">
+              <AvatarFallback className="bg-brand text-brand-foreground text-xs">{initials}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium capitalize">{displayName}</p>
+              <p className="truncate text-xs text-muted-foreground">{userEmail}</p>
+            </div>
           </div>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="h-8 w-8 text-muted-foreground hover:text-destructive shrink-0" 
+            onClick={handleSignOut}
+            title="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
         </div>
       </div>
     </div>

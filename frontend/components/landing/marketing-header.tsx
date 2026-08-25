@@ -22,10 +22,10 @@ export function MarketingHeader() {
         </nav>
         <div className="flex items-center gap-2">
           <Button variant="ghost" asChild className="hidden sm:inline-flex">
-            <Link href="/dashboard">Sign in</Link>
+            <Link href="/signin">Sign in</Link>
           </Button>
           <Button asChild>
-            <Link href="/dashboard">Open app</Link>
+            <Link href="/signin">Open app</Link>
           </Button>
         </div>
       </div>
