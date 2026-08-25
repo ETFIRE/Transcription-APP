@@ -55,7 +55,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           .from('tenants')
           .select('email')
           .eq('statut_abonnement', 'active')
-          .order('mis_a_jour_le', { ascending: false })
+          .eq('email', 'test@client.com')
           .limit(1)
           .single()
 
