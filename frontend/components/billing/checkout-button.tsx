@@ -11,24 +11,24 @@ export function CheckoutButton() {
   const handleCheckout = async () => {
     setLoading(true)
     try {
-      // 1. Récupérer l'utilisateur directement depuis la session Supabase active (1вніш secure)
-      const { data: { user }, error: authError } = await supabase.auth.getUser()
-      
-      if (authError || !user?.email) {
-        throw new Error("Utilisateur non connecté ou session expirée. Veuillez vous reconnecter.")
+      // 1. Récupérer l'e-mail actif depuis le localStorage (comme le Dashboard et l'History)
+      const userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+
+      if (!userEmail) {
+        throw new Error("Aucun e-mail trouvé dans la session. Veuillez vous reconnecter.")
       }
 
-      const userEmail = user.email.trim()
+      const cleanEmail = userEmail.trim()
 
-      // 2. Interroger Supabase pour obtenir LE VRAI tenant_id du compte actuellement connecté
+      // 2. Interroger Supabase pour obtenir le VRAI tenant_id correspondant à cet e-mail exact
       const { data: tenant, error: tenantError } = await supabase
         .from('tenants')
         .select('id')
-        .eq('email', userEmail)
+        .eq('email', cleanEmail)
         .maybeSingle()
 
       if (tenantError || !tenant) {
-        throw new Error(`Aucun profil (tenant) trouvé en base pour l'e-mail : ${userEmail}`)
+        throw new Error(`Aucun profil trouvé en base pour l'e-mail : ${cleanEmail}`)
       }
 
       const tenantId = tenant.id
