@@ -11,21 +11,16 @@ export function CheckoutButton() {
   const handleCheckout = async () => {
     setLoading(true)
     try {
-      // 1. Récupérer l'e-mail du compte connecté de façon fiable (localStorage avec fallback Auth)
-      let userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
-
-      if (!userEmail) {
-        const { data: { user } } = await supabase.auth.getUser()
-        userEmail = user?.email || null
+      // 1. Récupérer l'utilisateur directement depuis la session Supabase active (1вніш secure)
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      
+      if (authError || !user?.email) {
+        throw new Error("Utilisateur non connecté ou session expirée. Veuillez vous reconnecter.")
       }
 
-      if (!userEmail) {
-        throw new Error("Aucun utilisateur connecté trouvé. Veuillez vous reconnecter.")
-      }
+      const userEmail = user.email.trim()
 
-      userEmail = userEmail.trim()
-
-      // 2. Interroger Supabase pour obtenir le VRAI tenant_id de ce compte exact
+      // 2. Interroger Supabase pour obtenir LE VRAI tenant_id du compte actuellement connecté
       const { data: tenant, error: tenantError } = await supabase
         .from('tenants')
         .select('id')
@@ -33,12 +28,12 @@ export function CheckoutButton() {
         .maybeSingle()
 
       if (tenantError || !tenant) {
-        throw new Error(`Impossible de trouver le tenant pour l'e-mail : ${userEmail}`)
+        throw new Error(`Aucun profil (tenant) trouvé en base pour l'e-mail : ${userEmail}`)
       }
 
       const tenantId = tenant.id
       
-      // Remplace par TON vrai Price ID Stripe
+      // Ton vrai Price ID Stripe
       const priceId = 'price_1U8FN5GbUbRdrr9C4v3UnCny' 
 
       const response = await fetch('/api/stripe/checkout', {
@@ -50,10 +45,9 @@ export function CheckoutButton() {
       const data = await response.json()
 
       if (data.url) {
-        // Redirection vers la page sécurisée de Stripe
         window.location.href = data.url
       } else {
-        throw new Error(data.error || 'Erreur lors de la création de la session')
+        throw new Error(data.error || 'Erreur lors de la création de la session Stripe')
       }
     } catch (error: any) {
       console.error(error)
