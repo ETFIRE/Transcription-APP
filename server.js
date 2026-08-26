@@ -27,10 +27,16 @@ app.use(
 app.use(express.raw({ type: 'application/webhook+json' }));
 app.use(express.json());
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// --- CORRECTION ROBUSTE SUPABASE ---
+const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error("❌ ERREUR CRITIQUE : Les variables d'environnement Supabase (URL ou Clé) sont manquantes !");
+}
+
+const supabase = createClient(supabaseUrl || '', supabaseKey || '');
+// ------------------------------------
 
 const apiKey = process.env.LIVEKIT_API_KEY || 'devkey';
 const apiSecret = process.env.LIVEKIT_API_SECRET || 'secret';
@@ -227,8 +233,8 @@ app.post('/api/webhooks/livekit', async (req, res) => {
       }
 
       // Construction de l'URL publique Supabase Storage
-      const supabaseProjectUrl = process.env.SUPABASE_URL.replace(/\/$/, '');
-      const publicAudioUrl = `${supabaseProjectUrl}/storage/v1/object/public/recordings/${roomName}.mp4`;
+      const currentSupabaseUrl = supabaseUrl ? supabaseUrl.replace(/\/$/, '') : '';
+      const publicAudioUrl = `${currentSupabaseUrl}/storage/v1/object/public/recordings/${roomName}.mp4`;
 
       await supabase
         .from('reunions')
