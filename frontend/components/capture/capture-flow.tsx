@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { PageHeader } from '@/components/page-header'
 import { ConsentScreen } from '@/components/capture/consent-screen'
@@ -41,9 +42,25 @@ const steps: { id: Step; label: string }[] = [
 ]
 
 export function CaptureFlow() {
-  const [step, setStep] = useState<Step>('mode')
-  const [mode, setMode] = useState<CaptureMode | null>(null)
-  const [title, setTitle] = useState('')
+  const searchParams = useSearchParams()
+  const roomParam = searchParams.get('room')
+  const tokenParam = searchParams.get('token')
+
+  const isDirectJoin = Boolean(tokenParam || roomParam)
+
+  const [step, setStep] = useState<Step>(isDirectJoin ? 'capture' : 'mode')
+  const [mode, setMode] = useState<CaptureMode | null>(isDirectJoin ? 'video' : null)
+  const [title, setTitle] = useState(roomParam ? `Réunion : ${roomParam}` : '')
+
+  useEffect(() => {
+    if (tokenParam || roomParam) {
+      setMode('video')
+      setStep('capture')
+      if (roomParam) {
+        setTitle(`Réunion : ${roomParam}`)
+      }
+    }
+  }, [tokenParam, roomParam])
 
   const currentIndex = steps.findIndex((s) => s.id === step)
 
