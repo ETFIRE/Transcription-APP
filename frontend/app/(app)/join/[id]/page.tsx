@@ -83,7 +83,8 @@ export default function JoinMeetingPage() {
       }
 
       // Redirection vers l'interface de capture en direct
-      router.push(`/capture?room=${encodeURIComponent(meetingId)}&token=${data.token}`)
+      router.push(
+  `/capture?room=${encodeURIComponent(meetingId)}&token=${data.token}&title=${encodeURIComponent(meetingTitle)}`)
     } catch (err: any) {
       setError(err.message || 'Erreur lors de la connexion.')
       setJoining(false)

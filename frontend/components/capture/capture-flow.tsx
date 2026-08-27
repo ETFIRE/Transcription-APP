@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
 import { Card, CardContent } from '@/components/ui/card'
 import { PageHeader } from '@/components/page-header'
 import { ConsentScreen } from '@/components/capture/consent-screen'
@@ -45,22 +46,45 @@ export function CaptureFlow() {
   const searchParams = useSearchParams()
   const roomParam = searchParams.get('room')
   const tokenParam = searchParams.get('token')
+  const titleParam = searchParams.get('title')
 
   const isDirectJoin = Boolean(tokenParam || roomParam)
 
   const [step, setStep] = useState<Step>(isDirectJoin ? 'capture' : 'mode')
   const [mode, setMode] = useState<CaptureMode | null>(isDirectJoin ? 'video' : null)
-  const [title, setTitle] = useState(roomParam ? `Réunion : ${roomParam}` : '')
+  const [title, setTitle] = useState(titleParam || '')
 
   useEffect(() => {
-    if (tokenParam || roomParam) {
-      setMode('video')
-      setStep('capture')
-      if (roomParam) {
-        setTitle(`Réunion : ${roomParam}`)
+    async function resolveMeetingTitle() {
+      if (tokenParam || roomParam) {
+        setMode('video')
+        setStep('capture')
+
+        if (titleParam) {
+          setTitle(titleParam)
+          return
+        }
+
+        // Si la room est un UUID de réunion Supabase, on va chercher son vrai titre
+        if (roomParam) {
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomParam)
+          if (isUuid) {
+            const { data } = await supabase
+              .from('reunions')
+              .select('titre')
+              .eq('id', roomParam)
+              .maybeSingle()
+            if (data?.titre) {
+              setTitle(data.titre)
+              return
+            }
+          }
+        }
       }
     }
-  }, [tokenParam, roomParam])
+
+    resolveMeetingTitle()
+  }, [tokenParam, roomParam, titleParam])
 
   const currentIndex = steps.findIndex((s) => s.id === step)
 
