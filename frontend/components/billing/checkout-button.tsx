@@ -12,24 +12,37 @@ export function CheckoutButton() {
   useEffect(() => {
     async function checkSubscription() {
       try {
-        const userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+        const userEmail =
+          typeof window !== 'undefined'
+            ? localStorage.getItem('scribe_email') || localStorage.getItem('email')
+            : null
+
         if (!userEmail) {
+          console.warn('[Billing] Aucun email trouvé dans le localStorage.')
           setIsSubscribed(false)
           return
         }
 
-        const cleanEmail = userEmail.trim()
-        const { data: tenant } = await supabase
+        const cleanEmail = userEmail.trim().toLowerCase()
+
+        const { data: tenant, error } = await supabase
           .from('tenants')
-          .select('statut_abonnement, plan')
-          .eq('email', cleanEmail)
+          .select('id, statut_abonnement')
+          .ilike('email', cleanEmail)
           .maybeSingle()
 
-        // Vérifie si le statut est actif ou si le plan est "pro"
-        const active = tenant?.statut_abonnement === 'active' || tenant?.plan === 'pro'
-        setIsSubscribed(Boolean(active))
-      } catch (error) {
-        console.error('Erreur vérification abonnement :', error)
+        if (error) {
+          console.error('[Billing] Erreur Supabase :', error)
+          setIsSubscribed(false)
+          return
+        }
+
+        console.log('[Billing] Profil trouvé :', tenant)
+
+        const active = tenant?.statut_abonnement === 'active'
+        setIsSubscribed(active)
+      } catch (err) {
+        console.error('[Billing] Exception :', err)
         setIsSubscribed(false)
       }
     }
@@ -40,18 +53,21 @@ export function CheckoutButton() {
   const handleCheckout = async () => {
     setLoading(true)
     try {
-      const userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+      const userEmail =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('scribe_email') || localStorage.getItem('email')
+          : null
 
       if (!userEmail) {
         throw new Error('Aucun e-mail trouvé dans la session. Veuillez vous reconnecter.')
       }
 
-      const cleanEmail = userEmail.trim()
+      const cleanEmail = userEmail.trim().toLowerCase()
 
       const { data: tenant, error: tenantError } = await supabase
         .from('tenants')
         .select('id')
-        .eq('email', cleanEmail)
+        .ilike('email', cleanEmail)
         .maybeSingle()
 
       if (tenantError || !tenant) {
@@ -82,7 +98,7 @@ export function CheckoutButton() {
     }
   }
 
-  // Ne rien afficher pendant la vérification ou si l'utilisateur est déjà abonné
+  // Masquer le bouton tant qu'on vérifie ou si l'abonnement est actif
   if (isSubscribed === null || isSubscribed) {
     return null
   }
