@@ -2,22 +2,24 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Clock, CheckSquare, Loader2 } from 'lucide-react'
 
 interface MeetingItem {
   id: string
-  title: string
-  summary?: string
-  created_at: string
-  duration?: number
-  themes?: string[]
-  actions_count?: number
+  titre: string
+  resume?: string
+  cree_le: string
+  duree_secondes?: number
+  themes: string[]
+  open_actions_count: number
 }
 
 export default function HistoryPage() {
   const [meetings, setMeetings] = useState<MeetingItem[]>([])
   const [loading, setLoading] = useState(true)
+  const router = useRouter()
 
   useEffect(() => {
     async function fetchHistory() {
@@ -28,49 +30,82 @@ export default function HistoryPage() {
             : null
 
         if (!userEmail) {
-          setLoading(false)
+          router.push('/signin')
           return
         }
 
-        const cleanEmail = userEmail.trim().toLowerCase()
-
-        // 1. Récupérer le tenant_id
-        const { data: tenant } = await supabase
+        // 1. Récupérer le tenant_id de l'utilisateur connecté
+        const { data: tenant, error: tenantError } = await supabase
           .from('tenants')
           .select('id')
-          .ilike('email', cleanEmail)
+          .eq('email', userEmail.trim().toLowerCase())
           .maybeSingle()
 
-        if (!tenant) {
+        if (tenantError || !tenant) {
           setLoading(false)
           return
         }
 
-        // 2. Récupérer les réunions depuis la table meetings
-        const { data: rawMeetings, error } = await supabase
-          .from('meetings')
-          .select('*')
+        // 2. Récupérer les réunions et leurs analyses
+        const { data: rawMeetings, error: meetingsError } = await supabase
+          .from('reunions')
+          .select(`
+            id,
+            titre,
+            duree_secondes,
+            cree_le,
+            analyses_reunion (
+              resume,
+              ton,
+              themes,
+              actions
+            )
+          `)
           .eq('tenant_id', tenant.id)
-          .order('created_at', { ascending: false })
+          .order('cree_le', { ascending: false })
 
-        if (error) {
-          console.error('Erreur Supabase meetings :', error)
-          // Fallback au cas où le champ s'appelle user_id
-          const { data: fallbackMeetings } = await supabase
-            .from('meetings')
-            .select('*')
-            .order('created_at', { ascending: false })
-
-          if (fallbackMeetings) {
-            setMeetings(formatMeetings(fallbackMeetings))
-          }
+        if (meetingsError) {
+          console.error('Erreur chargement réunions :', meetingsError)
           setLoading(false)
           return
         }
 
-        if (rawMeetings) {
-          setMeetings(formatMeetings(rawMeetings))
+        const parseJsonArray = (val: any) => {
+          if (!val) return []
+          if (Array.isArray(val)) return val
+          if (typeof val === 'string') {
+            try {
+              const parsed = JSON.parse(val)
+              return Array.isArray(parsed) ? parsed : []
+            } catch {
+              return []
+            }
+          }
+          return []
         }
+
+        const formatted = (rawMeetings || []).map((m: any) => {
+          const analysis = Array.isArray(m.analyses_reunion)
+            ? m.analyses_reunion[0]
+            : m.analyses_reunion
+
+          const actions = parseJsonArray(analysis?.actions)
+          const openActions = actions.filter((a: any) => (a?.status || 'open') !== 'done').length
+
+          const themes = parseJsonArray(analysis?.themes)
+
+          return {
+            id: m.id,
+            titre: m.titre || 'Réunion sans titre',
+            resume: analysis?.resume || 'Aucun résumé disponible pour cette réunion.',
+            cree_le: m.cree_le,
+            duree_secondes: m.duree_secondes || 0,
+            themes: themes,
+            open_actions_count: openActions,
+          }
+        })
+
+        setMeetings(formatted)
       } catch (err) {
         console.error('Exception chargement historique :', err)
       } finally {
@@ -78,35 +113,8 @@ export default function HistoryPage() {
       }
     }
 
-    function formatMeetings(list: any[]): MeetingItem[] {
-      return list.map((m) => {
-        // Parsing des actions / décisions
-        let actionsCount = 0
-        if (Array.isArray(m.actions)) actionsCount = m.actions.length
-        else if (Array.isArray(m.decisions)) actionsCount = m.decisions.length
-        else if (typeof m.actions === 'number') actionsCount = m.actions
-
-        // Parsing des tags / thèmes
-        const themes = Array.isArray(m.themes)
-          ? m.themes
-          : Array.isArray(m.tags)
-          ? m.tags
-          : []
-
-        return {
-          id: m.id,
-          title: m.title || m.titre || 'Réunion sans titre',
-          summary: m.summary || m.resume || 'Aucun résumé disponible.',
-          created_at: m.created_at || m.cree_le || new Date().toISOString(),
-          duration: m.duration || m.duree_secondes || 0,
-          themes,
-          actions_count: actionsCount,
-        }
-      })
-    }
-
     fetchHistory()
-  }, [])
+  }, [router])
 
   const formatDate = (dateString: string) => {
     if (!dateString) return ''
@@ -126,14 +134,14 @@ export default function HistoryPage() {
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="flex h-[50vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     )
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 p-8">
+    <div className="mx-auto max-w-6xl px-4 py-8 space-y-8">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">History</h1>
         <p className="text-sm text-muted-foreground mt-1">
@@ -155,13 +163,13 @@ export default function HistoryPage() {
             >
               <div className="space-y-3">
                 <div className="text-xs text-muted-foreground">
-                  {formatDate(meeting.created_at)}
+                  {formatDate(meeting.cree_le)}
                 </div>
                 <h3 className="text-lg font-bold text-card-foreground group-hover:text-primary transition-colors line-clamp-1">
-                  {meeting.title}
+                  {meeting.titre}
                 </h3>
                 <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
-                  {meeting.summary}
+                  {meeting.resume}
                 </p>
 
                 {meeting.themes && meeting.themes.length > 0 && (
@@ -181,11 +189,11 @@ export default function HistoryPage() {
               <div className="flex items-center justify-between border-t pt-4 mt-6 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5">
                   <Clock className="h-3.5 w-3.5" />
-                  {formatDuration(meeting.duration)}
+                  {formatDuration(meeting.duree_secondes)}
                 </span>
                 <span className="flex items-center gap-1.5">
                   <CheckSquare className="h-3.5 w-3.5" />
-                  {meeting.actions_count} open action{meeting.actions_count && meeting.actions_count > 1 ? 's' : ''}
+                  {meeting.open_actions_count} open action{meeting.open_actions_count > 1 ? 's' : ''}
                 </span>
               </div>
             </Link>
