@@ -11,7 +11,7 @@ export async function GET(req: Request) {
     return NextResponse.redirect(`${origin}/signin?error=token_manquant`)
   }
 
-  // Vérifier et valider le compte
+  // Activer le compte dans Supabase
   const { data, error } = await supabase
     .from('tenants')
     .update({
