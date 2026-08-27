@@ -3,17 +3,16 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { Clock, CheckSquare, Loader2, Calendar } from 'lucide-react'
+import { Clock, CheckSquare, Loader2 } from 'lucide-react'
 
 interface MeetingItem {
   id: string
-  titre: string
-  resume?: string
-  cree_le: string
-  duree_secondes?: number
+  title: string
+  summary?: string
+  created_at: string
+  duration?: number
   themes?: string[]
-  tags?: string[]
-  nb_actions?: number
+  actions_count?: number
 }
 
 export default function HistoryPage() {
@@ -35,7 +34,7 @@ export default function HistoryPage() {
 
         const cleanEmail = userEmail.trim().toLowerCase()
 
-        // 1. Récupérer le profil tenant
+        // 1. Récupérer le tenant_id
         const { data: tenant } = await supabase
           .from('tenants')
           .select('id')
@@ -47,58 +46,63 @@ export default function HistoryPage() {
           return
         }
 
-        // 2. Récupérer les réunions avec leurs analyses
+        // 2. Récupérer les réunions depuis la table meetings
         const { data: rawMeetings, error } = await supabase
-          .from('reunions')
-          .select(`
-            id,
-            titre,
-            cree_le,
-            duree_secondes,
-            analyses_reunion (
-              resume,
-              decisions,
-              actions,
-              themes
-            )
-          `)
+          .from('meetings')
+          .select('*')
           .eq('tenant_id', tenant.id)
-          .order('cree_le', { ascending: false })
+          .order('created_at', { ascending: false })
 
         if (error) {
-          console.error('Erreur chargement historique :', error)
+          console.error('Erreur Supabase meetings :', error)
+          // Fallback au cas où le champ s'appelle user_id
+          const { data: fallbackMeetings } = await supabase
+            .from('meetings')
+            .select('*')
+            .order('created_at', { ascending: false })
+
+          if (fallbackMeetings) {
+            setMeetings(formatMeetings(fallbackMeetings))
+          }
           setLoading(false)
           return
         }
 
-        const formatted = (rawMeetings || []).map((m: any) => {
-          const analyse = Array.isArray(m.analyses_reunion)
-            ? m.analyses_reunion[0]
-            : m.analyses_reunion
-
-          const actionsCount = Array.isArray(analyse?.actions)
-            ? analyse.actions.length
-            : Array.isArray(analyse?.decisions)
-            ? analyse.decisions.length
-            : 0
-
-          return {
-            id: m.id,
-            titre: m.titre || 'Réunion sans titre',
-            resume: analyse?.resume || 'Aucun résumé disponible pour cette réunion.',
-            cree_le: m.cree_le,
-            duree_secondes: m.duree_secondes || 0,
-            themes: analyse?.themes || [],
-            nb_actions: actionsCount,
-          }
-        })
-
-        setMeetings(formatted)
+        if (rawMeetings) {
+          setMeetings(formatMeetings(rawMeetings))
+        }
       } catch (err) {
         console.error('Exception chargement historique :', err)
       } finally {
         setLoading(false)
       }
+    }
+
+    function formatMeetings(list: any[]): MeetingItem[] {
+      return list.map((m) => {
+        // Parsing des actions / décisions
+        let actionsCount = 0
+        if (Array.isArray(m.actions)) actionsCount = m.actions.length
+        else if (Array.isArray(m.decisions)) actionsCount = m.decisions.length
+        else if (typeof m.actions === 'number') actionsCount = m.actions
+
+        // Parsing des tags / thèmes
+        const themes = Array.isArray(m.themes)
+          ? m.themes
+          : Array.isArray(m.tags)
+          ? m.tags
+          : []
+
+        return {
+          id: m.id,
+          title: m.title || m.titre || 'Réunion sans titre',
+          summary: m.summary || m.resume || 'Aucun résumé disponible.',
+          created_at: m.created_at || m.cree_le || new Date().toISOString(),
+          duration: m.duration || m.duree_secondes || 0,
+          themes,
+          actions_count: actionsCount,
+        }
+      })
     }
 
     fetchHistory()
@@ -151,13 +155,13 @@ export default function HistoryPage() {
             >
               <div className="space-y-3">
                 <div className="text-xs text-muted-foreground">
-                  {formatDate(meeting.cree_le)}
+                  {formatDate(meeting.created_at)}
                 </div>
                 <h3 className="text-lg font-bold text-card-foreground group-hover:text-primary transition-colors line-clamp-1">
-                  {meeting.titre}
+                  {meeting.title}
                 </h3>
                 <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
-                  {meeting.resume}
+                  {meeting.summary}
                 </p>
 
                 {meeting.themes && meeting.themes.length > 0 && (
@@ -177,11 +181,11 @@ export default function HistoryPage() {
               <div className="flex items-center justify-between border-t pt-4 mt-6 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5">
                   <Clock className="h-3.5 w-3.5" />
-                  {formatDuration(meeting.duree_secondes)}
+                  {formatDuration(meeting.duration)}
                 </span>
                 <span className="flex items-center gap-1.5">
                   <CheckSquare className="h-3.5 w-3.5" />
-                  {meeting.nb_actions} open action{meeting.nb_actions && meeting.nb_actions > 1 ? 's' : ''}
+                  {meeting.actions_count} open action{meeting.actions_count && meeting.actions_count > 1 ? 's' : ''}
                 </span>
               </div>
             </Link>
