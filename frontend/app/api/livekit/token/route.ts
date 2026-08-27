@@ -1,40 +1,43 @@
+import { NextResponse } from 'next/server'
 import { AccessToken } from 'livekit-server-sdk'
-import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const room = req.nextUrl.searchParams.get('room') || 'salon-principal'
-    const username = req.nextUrl.searchParams.get('username') || 'Participant'
+    const { roomName, participantName } = await req.json()
+
+    if (!roomName) {
+      return NextResponse.json({ error: 'roomName requis.' }, { status: 400 })
+    }
 
     const apiKey = process.env.LIVEKIT_API_KEY
     const apiSecret = process.env.LIVEKIT_API_SECRET
-    const wsUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL
 
-    if (!apiKey || !apiSecret || !wsUrl) {
-      return NextResponse.json(
-        { error: 'Configuration LiveKit manquante (clés API)' },
-        { status: 500 }
-      )
+    if (!apiKey || !apiSecret) {
+      return NextResponse.json({ error: 'Identifiants LiveKit non configurés.' }, { status: 500 })
     }
 
+    const identity = participantName || `guest_${Math.random().toString(36).substring(7)}`
+
     const at = new AccessToken(apiKey, apiSecret, {
-      identity: username,
-      name: username,
+      identity,
+      name: identity,
+      ttl: '2h',
     })
 
     at.addGrant({
-      room,
       roomJoin: true,
+      room: roomName,
       canPublish: true,
       canSubscribe: true,
     })
 
     const token = await at.toJwt()
 
-    return NextResponse.json({ token, wsUrl })
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ token })
+  } catch (err: any) {
+    console.error('Erreur génération token LiveKit :', err)
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
