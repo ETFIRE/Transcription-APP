@@ -12,49 +12,66 @@ import { supabase } from '@/lib/supabase'
 export default function SignInPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [isSignUp, setIsSignUp] = useState(false) // Bascule entre Inscription et Connexion
+  const [isSignUp, setIsSignUp] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [infoMessage, setInfoMessage] = useState<string | null>(null)
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!email || !password) return
     setLoading(true)
+    setInfoMessage(null)
+
+    const cleanEmail = email.trim().toLowerCase()
 
     try {
       // 1. Vérifier si l'e-mail existe déjà en base
       const { data: existingTenant, error: fetchError } = await supabase
         .from('tenants')
         .select('*')
-        .eq('email', email)
+        .ilike('email', cleanEmail)
         .maybeSingle()
 
+      if (fetchError) throw fetchError
+
       if (isSignUp) {
-        // --- MODE INSCRIPTION ---
+        // --- MODE INSCRIPTION (Point 2) ---
         if (existingTenant) {
           alert("Cet e-mail est déjà utilisé. Veuillez vous connecter.")
-          setIsSignUp(false) // Bascule automatique vers l'écran de connexion
+          setIsSignUp(false)
           setLoading(false)
           return
         }
 
-        // Créer le nouveau compte
-        const { data: newTenant, error: insertError } = await supabase
+        // Générer un token unique côté navigateur
+        const verificationToken = crypto.randomUUID()
+
+        // Créer le compte en attente de validation
+        const { error: insertError } = await supabase
           .from('tenants')
-          .insert([{ email, password, statut_abonnement: 'inactive' }])
-          .select()
-          .single()
+          .insert([
+            {
+              email: cleanEmail,
+              password,
+              statut_abonnement: 'inactive',
+              email_verifie: false,
+              token_verification: verificationToken,
+            },
+          ])
 
         if (insertError) throw insertError
 
-        localStorage.setItem('scribe_email', newTenant.email)
-        router.push('/dashboard')
+        // TODO: Déclencher l'envoi de l'e-mail avec le lien contenant verificationToken
+        // ex: https://ton-site.vercel.app/api/auth/verify?token=${verificationToken}
 
+        setInfoMessage("Compte créé ! Un e-mail de confirmation vous a été envoyé. Veuillez cliquer sur le lien avant de vous connecter.")
+        setIsSignUp(false)
       } else {
-        // --- MODE CONNEXION ---
+        // --- MODE CONNEXION (Point 4) ---
         if (!existingTenant) {
           alert("Aucun compte trouvé avec cet e-mail. Veuillez vous inscrire.")
-          setIsSignUp(true) // Bascule automatique vers l'inscription
+          setIsSignUp(true)
           setLoading(false)
           return
         }
@@ -66,21 +83,27 @@ export default function SignInPage() {
           return
         }
 
+        // Bloquer la connexion si l'e-mail n'est pas encore confirmé
+        if (existingTenant.email_verifie === false) {
+          alert("Votre adresse e-mail n'est pas encore vérifiée. Veuillez cliquer sur le lien reçu par e-mail.")
+          setLoading(false)
+          return
+        }
+
         // Si le compte n'avait pas encore de mot de passe en BDD, on l'ajoute
         if (!existingTenant.password) {
           await supabase
             .from('tenants')
             .update({ password })
-            .eq('email', email)
+            .ilike('email', cleanEmail)
         }
 
         localStorage.setItem('scribe_email', existingTenant.email)
         router.push('/dashboard')
       }
-
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erreur authentification:', err)
-      alert('Une erreur est survenue. Vérifiez la console.')
+      alert(err.message || 'Une erreur est survenue. Vérifiez la console.')
     } finally {
       setLoading(false)
     }
@@ -97,13 +120,18 @@ export default function SignInPage() {
             {isSignUp ? 'Create an account' : 'Sign in to Scribe'}
           </CardTitle>
           <CardDescription>
-            {isSignUp 
-              ? 'Enter your details to create your workspace' 
+            {isSignUp
+              ? 'Enter your details to create your workspace'
               : 'Enter your email and password to access your workspace'}
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
+            {infoMessage && (
+              <div className="p-3 text-sm rounded bg-blue-50 text-blue-800 border border-blue-200">
+                {infoMessage}
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="email">Email address</Label>
               <Input
@@ -129,15 +157,18 @@ export default function SignInPage() {
           </CardContent>
           <CardFooter className="flex flex-col gap-3">
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Processing...' : (isSignUp ? 'Sign Up' : 'Sign In')}
+              {loading ? 'Processing...' : isSignUp ? 'Sign Up' : 'Sign In'}
             </Button>
             <button
               type="button"
-              onClick={() => setIsSignUp(!isSignUp)}
+              onClick={() => {
+                setIsSignUp(!isSignUp)
+                setInfoMessage(null)
+              }}
               className="text-sm text-muted-foreground hover:text-foreground transition-colors text-center w-full"
             >
-              {isSignUp 
-                ? 'Already have an account? Sign in' 
+              {isSignUp
+                ? 'Already have an account? Sign in'
                 : "Don't have an account? Sign up"}
             </button>
           </CardFooter>
