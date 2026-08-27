@@ -9,43 +9,62 @@ import { Loader2, Radio, UserCheck } from 'lucide-react'
 
 export default function JoinMeetingPage() {
   const params = useParams()
-  const meetingId = params.id as string
+  const meetingId = decodeURIComponent((params.id as string) || '')
   const router = useRouter()
 
   const [loading, setLoading] = useState(true)
-  const [meeting, setMeeting] = useState<any>(null)
+  const [meetingTitle, setMeetingTitle] = useState<string>('')
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     async function checkMeeting() {
-      try {
-        const { data, error } = await supabase
-          .from('reunions')
-          .select('id, titre, statut, cree_le')
-          .eq('id', meetingId)
-          .maybeSingle()
-
-        if (error || !data) {
-          setError('Réunion introuvable.')
-        } else {
-          setMeeting(data)
-        }
-      } catch (err: any) {
-        setError(err.message)
-      } finally {
+      if (!meetingId) {
+        setError('Identifiant de salle manquant.')
         setLoading(false)
+        return
       }
+
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(meetingId)
+
+      // Si c'est un UUID valide, on essaye de récupérer le titre officiel dans Supabase
+      if (isUuid) {
+        try {
+          const { data } = await supabase
+            .from('reunions')
+            .select('titre')
+            .eq('id', meetingId)
+            .maybeSingle()
+
+          if (data?.titre) {
+            setMeetingTitle(data.titre)
+            setLoading(false)
+            return
+          }
+        } catch {
+          // Si la recherche échoue, on continue avec le fallback
+        }
+      }
+
+      // Nom par défaut si ce n'est pas un UUID ou si la ligne n'existe pas encore en base
+      const formattedTitle =
+        meetingId === 'salon-principal'
+          ? 'Salon Principal'
+          : `Salle ${meetingId}`
+      setMeetingTitle(formattedTitle)
+      setLoading(false)
     }
 
-    if (meetingId) checkMeeting()
+    checkMeeting()
   }, [meetingId])
 
   const handleJoin = async () => {
     setJoining(true)
+    setError(null)
+
     const storedEmail =
       typeof window !== 'undefined'
-        ? localStorage.getItem('scribe_email') || localStorage.getItem('email') || 'Invité'
+        ? localStorage.getItem('scribe_email') || localStorage.getItem('email') || `Invité_${Math.floor(100 + Math.random() * 900)}`
         : 'Invité'
 
     try {
@@ -59,12 +78,14 @@ export default function JoinMeetingPage() {
       })
 
       const data = await res.json()
-      if (!res.ok || !data.token) throw new Error(data.error || 'Erreur token LiveKit')
+      if (!res.ok || !data.token) {
+        throw new Error(data.error || 'Impossible de générer le token de connexion.')
+      }
 
-      // Redirection vers /capture avec le token LiveKit et l'ID de la réunion
-      router.push(`/capture?room=${meetingId}&token=${data.token}`)
+      // Redirection vers l'interface de capture en direct
+      router.push(`/capture?room=${encodeURIComponent(meetingId)}&token=${data.token}`)
     } catch (err: any) {
-      setError(err.message)
+      setError(err.message || 'Erreur lors de la connexion.')
       setJoining(false)
     }
   }
@@ -77,43 +98,43 @@ export default function JoinMeetingPage() {
     )
   }
 
-  if (error || !meeting) {
-    return (
-      <div className="max-w-md mx-auto mt-20 p-6 text-center space-y-4">
-        <div className="text-destructive font-medium">{error || 'Session inaccessible'}</div>
-        <Button variant="outline" onClick={() => router.push('/dashboard')}>
-          Retour au tableau de bord
-        </Button>
-      </div>
-    )
-  }
-
   return (
     <div className="flex min-h-[70vh] items-center justify-center px-4">
-      <Card className="w-full max-w-md shadow-lg">
+      <Card className="w-full max-w-md shadow-lg border">
         <CardHeader className="text-center space-y-2">
-          <div className="mx-auto w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 mb-2">
+          <div className="mx-auto w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-950/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-2">
             <Radio className="h-6 w-6 animate-pulse" />
           </div>
-          <CardTitle className="text-2xl font-bold">{meeting.titre || 'Réunion en direct'}</CardTitle>
+          <CardTitle className="text-2xl font-bold">{meetingTitle}</CardTitle>
           <CardDescription>
-            Une session audio est en cours. Cliquez ci-dessous pour vous y connecter.
+            Une session audio / vidéo est ouverte. Cliquez ci-dessous pour rejoindre la réunion.
           </CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-4">
           <div className="rounded-lg bg-secondary/50 p-4 text-xs text-muted-foreground space-y-1">
-            <p><strong>ID de la salle :</strong> {meeting.id}</p>
+            <p><strong>Salle :</strong> {meetingId}</p>
             <p><strong>Statut :</strong> En direct</p>
           </div>
 
+          {error && (
+            <div className="rounded-md bg-destructive/15 p-3 text-xs text-destructive">
+              {error}
+            </div>
+          )}
+
           <Button onClick={handleJoin} className="w-full" disabled={joining}>
             {joining ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Connexion en cours...
+              </>
             ) : (
-              <UserCheck className="h-4 w-4 mr-2" />
+              <>
+                <UserCheck className="h-4 w-4 mr-2" />
+                Rejoindre la salle
+              </>
             )}
-            Rejoindre la salle
           </Button>
         </CardContent>
       </Card>
