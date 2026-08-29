@@ -15,8 +15,10 @@ function SignInForm() {
   const [isSignUp, setIsSignUp] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
+  
   const router = useRouter()
   const searchParams = useSearchParams()
+  const redirectTarget = searchParams.get('redirect') || '/dashboard'
 
   // Détection des retours de vérification via l'URL (?verified=true ou ?error=...)
   useEffect(() => {
@@ -144,7 +146,9 @@ function SignInForm() {
         }
 
         localStorage.setItem('scribe_email', existingTenant.email)
-        router.push('/dashboard')
+        
+        // Redirection vers la réunion cible ou le Dashboard par défaut
+        router.push(redirectTarget)
       }
     } catch (err: any) {
       console.error('Erreur authentification:', err)

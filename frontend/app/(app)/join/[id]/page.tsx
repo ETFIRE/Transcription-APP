@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Loader2, Radio, UserCheck } from 'lucide-react'
+import { Loader2, Radio, UserCheck, LogIn } from 'lucide-react'
 
 export default function JoinMeetingPage() {
   const params = useParams()
@@ -16,18 +16,33 @@ export default function JoinMeetingPage() {
   const [meetingTitle, setMeetingTitle] = useState<string>('')
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null)
 
   useEffect(() => {
-    async function checkMeeting() {
+    async function init() {
       if (!meetingId) {
         setError('Identifiant de salle manquant.')
         setLoading(false)
         return
       }
 
+      // 1. Vérifier si l'utilisateur est connecté
+      const storedEmail =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('scribe_email') || localStorage.getItem('email')
+          : null
+
+      if (!storedEmail) {
+        // Redirection vers la page de connexion avec l'URL de retour
+        router.push(`/signin?redirect=${encodeURIComponent(`/join/${meetingId}`)}`)
+        return
+      }
+
+      setCurrentUserEmail(storedEmail)
+
+      // 2. Vérifier si c'est un UUID de réunion dans Supabase pour récupérer le vrai titre
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(meetingId)
 
-      // Si c'est un UUID valide, on essaye de récupérer le titre officiel dans Supabase
       if (isUuid) {
         try {
           const { data } = await supabase
@@ -42,30 +57,29 @@ export default function JoinMeetingPage() {
             return
           }
         } catch {
-          // Si la recherche échoue, on continue avec le fallback
+          // Si échec, on applique le fallback
         }
       }
 
-      // Nom par défaut si ce n'est pas un UUID ou si la ligne n'existe pas encore en base
-      const formattedTitle =
+      const defaultTitle =
         meetingId === 'salon-principal'
           ? 'Salon Principal'
           : `Salle ${meetingId}`
-      setMeetingTitle(formattedTitle)
+      setMeetingTitle(defaultTitle)
       setLoading(false)
     }
 
-    checkMeeting()
-  }, [meetingId])
+    init()
+  }, [meetingId, router])
 
   const handleJoin = async () => {
+    if (!currentUserEmail) {
+      router.push(`/signin?redirect=${encodeURIComponent(`/join/${meetingId}`)}`)
+      return
+    }
+
     setJoining(true)
     setError(null)
-
-    const storedEmail =
-      typeof window !== 'undefined'
-        ? localStorage.getItem('scribe_email') || localStorage.getItem('email') || `Invité_${Math.floor(100 + Math.random() * 900)}`
-        : 'Invité'
 
     try {
       const res = await fetch('/api/livekit/token', {
@@ -73,7 +87,7 @@ export default function JoinMeetingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomName: meetingId,
-          participantName: storedEmail,
+          participantName: currentUserEmail,
         }),
       })
 
@@ -82,9 +96,10 @@ export default function JoinMeetingPage() {
         throw new Error(data.error || 'Impossible de générer le token de connexion.')
       }
 
-      // Redirection vers l'interface de capture en direct
+      // Redirection vers le flux live avec le token et le titre exact
       router.push(
-  `/capture?room=${encodeURIComponent(meetingId)}&token=${data.token}&title=${encodeURIComponent(meetingTitle)}`)
+        `/capture?room=${encodeURIComponent(meetingId)}&token=${data.token}&title=${encodeURIComponent(meetingTitle)}`
+      )
     } catch (err: any) {
       setError(err.message || 'Erreur lors de la connexion.')
       setJoining(false)
@@ -115,7 +130,7 @@ export default function JoinMeetingPage() {
         <CardContent className="space-y-4">
           <div className="rounded-lg bg-secondary/50 p-4 text-xs text-muted-foreground space-y-1">
             <p><strong>Salle :</strong> {meetingId}</p>
-            <p><strong>Statut :</strong> En direct</p>
+            <p><strong>Connecté en tant que :</strong> {currentUserEmail}</p>
           </div>
 
           {error && (
