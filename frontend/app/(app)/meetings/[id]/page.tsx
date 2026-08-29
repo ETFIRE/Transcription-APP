@@ -21,57 +21,15 @@ import {
   Check,
   Video,
   Mic,
+  MessageSquare,
+  User,
 } from 'lucide-react'
 
-function extractMeetingData(m: any) {
-  let parsedCr: any = null
-  if (typeof m.compte_rendu === 'string') {
-    try {
-      parsedCr = JSON.parse(m.compte_rendu)
-    } catch {
-      parsedCr = null
-    }
-  } else if (typeof m.compte_rendu === 'object' && m.compte_rendu !== null) {
-    parsedCr = m.compte_rendu
-  }
-
-  const summary =
-    m.resume ||
-    m.synthese ||
-    m.summary ||
-    parsedCr?.resume ||
-    parsedCr?.synthese ||
-    parsedCr?.summary ||
-    (typeof m.compte_rendu === 'string' && !parsedCr ? m.compte_rendu : '') ||
-    m.transcription ||
-    ''
-
-  let tags: string[] = []
-  if (Array.isArray(m.tags)) tags = m.tags
-  else if (Array.isArray(parsedCr?.tags)) tags = parsedCr.tags
-  else if (typeof m.tags === 'string') {
-    try {
-      tags = JSON.parse(m.tags)
-    } catch {
-      tags = m.tags.split(',').map((t: string) => t.trim())
-    }
-  }
-
-  let actions: any[] = []
-  if (Array.isArray(m.actions)) actions = m.actions
-  else if (Array.isArray(parsedCr?.actions)) actions = parsedCr.actions
-  else if (Array.isArray(m.action_items)) actions = m.action_items
-  else if (Array.isArray(parsedCr?.action_items)) actions = parsedCr.action_items
-
-  const transcription =
-    m.transcription ||
-    m.transcript ||
-    m.texte_transcription ||
-    parsedCr?.transcription ||
-    parsedCr?.transcript ||
-    ''
-
-  return { summary, tags, actions, transcription }
+function formatSeconds(seconds?: number | null) {
+  if (seconds == null) return ''
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
 export default function MeetingDetailPage() {
@@ -91,9 +49,15 @@ export default function MeetingDetailPage() {
       if (!meetingId) return
 
       try {
+        // Récupération avec toutes les tables associées
         const { data, error } = await supabase
           .from('reunions')
-          .select('*')
+          .select(`
+            *,
+            analyses_reunion (*),
+            transcriptions (*),
+            participants_reunion (*)
+          `)
           .eq('id', meetingId)
           .maybeSingle()
 
@@ -104,9 +68,15 @@ export default function MeetingDetailPage() {
           interval = setInterval(async () => {
             const { data: updated } = await supabase
               .from('reunions')
-              .select('*')
+              .select(`
+                *,
+                analyses_reunion (*),
+                transcriptions (*),
+                participants_reunion (*)
+              `)
               .eq('id', meetingId)
               .maybeSingle()
+
             if (updated && updated.statut !== 'en_attente' && updated.statut !== 'traitement') {
               setMeeting(updated)
               clearInterval(interval)
@@ -127,10 +97,56 @@ export default function MeetingDetailPage() {
     }
   }, [meetingId])
 
+  // Extraction des données réelles
+  const analysis = Array.isArray(meeting?.analyses_reunion)
+    ? meeting.analyses_reunion[0]
+    : meeting?.analyses_reunion || null
+
+  const summary = analysis?.resume || meeting?.description || ''
+
+  let themes: string[] = []
+  if (Array.isArray(analysis?.themes)) {
+    themes = analysis.themes.map((t: any) => (typeof t === 'string' ? t : t.nom || t.tag || JSON.stringify(t)))
+  } else if (typeof analysis?.themes === 'string') {
+    try {
+      themes = JSON.parse(analysis.themes)
+    } catch {
+      themes = analysis.themes.split(/[,;\n]/).map((t: string) => t.trim()).filter(Boolean)
+    }
+  }
+
+  let actions: any[] = []
+  if (Array.isArray(analysis?.actions)) {
+    actions = analysis.actions
+  } else if (typeof analysis?.actions === 'string') {
+    try {
+      actions = JSON.parse(analysis.actions)
+    } catch {
+      actions = analysis.actions.split('\n').map((a: string) => a.trim()).filter(Boolean)
+    }
+  }
+
+  // Tri des transcriptions chronologiques
+  const transcriptions: any[] = Array.isArray(meeting?.transcriptions)
+    ? [...meeting.transcriptions].sort((a, b) => (a.debut_secondes || 0) - (b.debut_secondes || 0))
+    : []
+
+  // Mapping des noms des participants
+  const participants: any[] = Array.isArray(meeting?.participants_reunion) ? meeting.participants_reunion : []
+  const getSpeakerName = (label: string) => {
+    const p = participants.find((part) => part.label_speaker === label)
+    return p?.nom_reel || label || 'Intervenant'
+  }
+
+  const durationMin = meeting?.duree_secondes ? Math.max(1, Math.round(meeting.duree_secondes / 60)) : 0
+
   const handleCopySummary = () => {
     if (!meeting) return
-    const { summary, actions } = extractMeetingData(meeting)
-    const textToCopy = `${meeting.titre || 'Réunion'}\n\nRésumé :\n${summary}\n\nActions :\n${actions.map((a: any) => `- ${typeof a === 'string' ? a : a.tache || a.description}`).join('\n')}`
+    const actionsFormatted = actions
+      .map((a: any) => `- ${typeof a === 'string' ? a : a.tache || a.description || JSON.stringify(a)}`)
+      .join('\n')
+
+    const textToCopy = `${meeting.titre || 'Réunion'}\n\nRésumé :\n${summary}\n\nActions :\n${actionsFormatted}`
     navigator.clipboard.writeText(textToCopy)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
@@ -156,8 +172,6 @@ export default function MeetingDetailPage() {
       </div>
     )
   }
-
-  const { summary, tags, actions, transcription } = extractMeetingData(meeting)
 
   const formattedDate = meeting.cree_le
     ? new Intl.DateTimeFormat('fr-FR', {
@@ -198,16 +212,17 @@ export default function MeetingDetailPage() {
         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <Calendar className="h-3.5 w-3.5" /> {formattedDate}
           <span>•</span>
-          <Clock className="h-3.5 w-3.5" /> {meeting.duree || 0} min
+          <Clock className="h-3.5 w-3.5" /> {durationMin} min
           <span>•</span>
           <span className="flex items-center gap-1 uppercase tracking-wider text-[11px] font-semibold">
             {meeting.type_mode === 'visio' ? <Video className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-            {meeting.type_mode || 'audio'}
+            {meeting.type_mode || 'visio'}
           </span>
         </div>
         <h1 className="text-3xl font-bold tracking-tight text-foreground">{meeting.titre || 'Sans titre'}</h1>
       </div>
 
+      {/* LECTEUR AUDIO SOURCE */}
       {meeting.audio_url ? (
         <Card className="border-border/60 bg-secondary/20 shadow-sm">
           <CardContent className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4">
@@ -262,10 +277,11 @@ export default function MeetingDetailPage() {
               : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >
-          <FileText className="h-4 w-4" /> Transcription texte
+          <FileText className="h-4 w-4" /> Transcription texte ({transcriptions.length})
         </button>
       </div>
 
+      {/* ONGLET COMPTE-RENDU */}
       {activeTab === 'summary' && (
         <div className="grid gap-6 md:grid-cols-3">
           <div className="space-y-6 md:col-span-2">
@@ -274,6 +290,9 @@ export default function MeetingDetailPage() {
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-brand" /> Synthèse & Résumé
                 </CardTitle>
+                {analysis?.ton && (
+                  <CardDescription>Ton détecté : <span className="font-medium text-foreground">{analysis.ton}</span></CardDescription>
+                )}
               </CardHeader>
               <CardContent className="space-y-4 text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
                 {summary || <span className="italic text-muted-foreground">Aucun résumé disponible pour le moment.</span>}
@@ -302,20 +321,20 @@ export default function MeetingDetailPage() {
           </div>
 
           <div className="space-y-6">
-            {tags.length > 0 && (
+            {themes.length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                    Thématiques & Tags
+                    Thématiques & Thèmes
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-wrap gap-1.5">
-                  {tags.map((tag: string, i: number) => (
+                  {themes.map((theme: string, i: number) => (
                     <span
                       key={i}
                       className="rounded-md bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground"
                     >
-                      {tag}
+                      {theme}
                     </span>
                   ))}
                 </CardContent>
@@ -347,19 +366,37 @@ export default function MeetingDetailPage() {
         </div>
       )}
 
+      {/* ONGLET TRANSCRIPTION AVEC DIARISATION */}
       {activeTab === 'transcript' && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Transcription brute</CardTitle>
-            <CardDescription>Reconnaissance automatique de la parole extraite de l'enregistrement audio</CardDescription>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <MessageSquare className="h-5 w-5 text-primary" /> Transcription intégrale
+            </CardTitle>
+            <CardDescription>Segments audio transcrits par intervenant</CardDescription>
           </CardHeader>
-          <CardContent>
-            {transcription ? (
-              <div className="rounded-lg bg-secondary/30 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                {transcription}
+          <CardContent className="space-y-4">
+            {transcriptions.length > 0 ? (
+              <div className="space-y-3">
+                {transcriptions.map((t: any, index: number) => (
+                  <div key={t.id || index} className="rounded-xl border bg-secondary/20 p-4 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1.5 font-semibold text-primary">
+                        <User className="h-3.5 w-3.5" />
+                        {getSpeakerName(t.label_speaker)}
+                      </span>
+                      {(t.debut_secondes != null || t.fin_secondes != null) && (
+                        <span className="font-mono text-[11px]">
+                          {formatSeconds(t.debut_secondes)} - {formatSeconds(t.fin_secondes)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm leading-relaxed text-foreground">{t.texte}</p>
+                  </div>
+                ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground italic">Aucune transcription brute enregistrée.</p>
+              <p className="text-sm text-muted-foreground italic">Aucune transcription enregistrée pour cette réunion.</p>
             )}
           </CardContent>
         </Card>
