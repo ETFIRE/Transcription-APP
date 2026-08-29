@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Loader2, Radio, UserCheck, LogIn } from 'lucide-react'
+import { Loader2, Radio, UserCheck, User } from 'lucide-react'
 
 export default function JoinMeetingPage() {
   const params = useParams()
@@ -17,6 +19,7 @@ export default function JoinMeetingPage() {
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null)
+  const [displayName, setDisplayName] = useState<string>('')
 
   useEffect(() => {
     async function init() {
@@ -26,21 +29,27 @@ export default function JoinMeetingPage() {
         return
       }
 
-      // 1. Vérifier si l'utilisateur est connecté
       const storedEmail =
         typeof window !== 'undefined'
           ? localStorage.getItem('scribe_email') || localStorage.getItem('email')
           : null
 
       if (!storedEmail) {
-        // Redirection vers la page de connexion avec l'URL de retour
         router.push(`/signin?redirect=${encodeURIComponent(`/join/${meetingId}`)}`)
         return
       }
 
       setCurrentUserEmail(storedEmail)
 
-      // 2. Vérifier si c'est un UUID de réunion dans Supabase pour récupérer le vrai titre
+      // Pré-remplir le nom du participant
+      const savedName = localStorage.getItem('scribe_display_name')
+      if (savedName) {
+        setDisplayName(savedName)
+      } else {
+        const defaultName = storedEmail.split('@')[0].replace(/[._-]/g, ' ')
+        setDisplayName(defaultName.charAt(0).toUpperCase() + defaultName.slice(1))
+      }
+
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(meetingId)
 
       if (isUuid) {
@@ -57,29 +66,26 @@ export default function JoinMeetingPage() {
             return
           }
         } catch {
-          // Si échec, on applique le fallback
+          // Fallback
         }
       }
 
-      const defaultTitle =
-        meetingId === 'salon-principal'
-          ? 'Salon Principal'
-          : `Salle ${meetingId}`
-      setMeetingTitle(defaultTitle)
+      setMeetingTitle(meetingId === 'salon-principal' ? 'Salon Principal' : `Salle ${meetingId}`)
       setLoading(false)
     }
 
     init()
   }, [meetingId, router])
 
-  const handleJoin = async () => {
-    if (!currentUserEmail) {
-      router.push(`/signin?redirect=${encodeURIComponent(`/join/${meetingId}`)}`)
-      return
-    }
+  const handleJoin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!currentUserEmail) return
 
     setJoining(true)
     setError(null)
+
+    const finalParticipantName = displayName.trim() || currentUserEmail.split('@')[0]
+    localStorage.setItem('scribe_display_name', finalParticipantName)
 
     try {
       const res = await fetch('/api/livekit/token', {
@@ -87,7 +93,7 @@ export default function JoinMeetingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomName: meetingId,
-          participantName: currentUserEmail,
+          participantName: finalParticipantName,
         }),
       })
 
@@ -96,9 +102,8 @@ export default function JoinMeetingPage() {
         throw new Error(data.error || 'Impossible de générer le token de connexion.')
       }
 
-      // Redirection vers le flux live avec le token et le titre exact
       router.push(
-        `/capture?room=${encodeURIComponent(meetingId)}&token=${data.token}&title=${encodeURIComponent(meetingTitle)}`
+        `/capture?room=${encodeURIComponent(meetingId)}&token=${data.token}&title=${encodeURIComponent(meetingTitle)}&username=${encodeURIComponent(finalParticipantName)}`
       )
     } catch (err: any) {
       setError(err.message || 'Erreur lors de la connexion.')
@@ -123,36 +128,52 @@ export default function JoinMeetingPage() {
           </div>
           <CardTitle className="text-2xl font-bold">{meetingTitle}</CardTitle>
           <CardDescription>
-            Une session audio / vidéo est ouverte. Cliquez ci-dessous pour rejoindre la réunion.
+            Indiquez votre nom avant de rejoindre la visioconférence.
           </CardDescription>
         </CardHeader>
 
-        <CardContent className="space-y-4">
-          <div className="rounded-lg bg-secondary/50 p-4 text-xs text-muted-foreground space-y-1">
-            <p><strong>Salle :</strong> {meetingId}</p>
-            <p><strong>Connecté en tant que :</strong> {currentUserEmail}</p>
-          </div>
-
-          {error && (
-            <div className="rounded-md bg-destructive/15 p-3 text-xs text-destructive">
-              {error}
+        <form onSubmit={handleJoin}>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="guestName" className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                <User className="h-3.5 w-3.5" /> Votre nom affiché
+              </Label>
+              <Input
+                id="guestName"
+                type="text"
+                required
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Ex: Thomas Martin"
+              />
             </div>
-          )}
 
-          <Button onClick={handleJoin} className="w-full" disabled={joining}>
-            {joining ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Connexion en cours...
-              </>
-            ) : (
-              <>
-                <UserCheck className="h-4 w-4 mr-2" />
-                Rejoindre la salle
-              </>
+            <div className="rounded-lg bg-secondary/50 p-3 text-xs text-muted-foreground space-y-1">
+              <p><strong>Salle :</strong> {meetingId}</p>
+              <p><strong>Compte :</strong> {currentUserEmail}</p>
+            </div>
+
+            {error && (
+              <div className="rounded-md bg-destructive/15 p-3 text-xs text-destructive">
+                {error}
+              </div>
             )}
-          </Button>
-        </CardContent>
+
+            <Button type="submit" className="w-full" disabled={joining}>
+              {joining ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Connexion...
+                </>
+              ) : (
+                <>
+                  <UserCheck className="h-4 w-4 mr-2" />
+                  Rejoindre la salle
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </form>
       </Card>
     </div>
   )

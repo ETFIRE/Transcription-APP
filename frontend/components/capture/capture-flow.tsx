@@ -47,12 +47,14 @@ export function CaptureFlow() {
   const roomParam = searchParams.get('room')
   const tokenParam = searchParams.get('token')
   const titleParam = searchParams.get('title')
+  const usernameParam = searchParams.get('username')
 
   const isDirectJoin = Boolean(tokenParam || roomParam)
 
   const [step, setStep] = useState<Step>(isDirectJoin ? 'capture' : 'mode')
   const [mode, setMode] = useState<CaptureMode | null>(isDirectJoin ? 'video' : null)
   const [title, setTitle] = useState(titleParam || '')
+  const [hostName, setHostName] = useState(usernameParam || '')
 
   useEffect(() => {
     async function resolveMeetingTitle() {
@@ -60,10 +62,8 @@ export function CaptureFlow() {
         setMode('video')
         setStep('capture')
 
-        if (titleParam) {
-          setTitle(titleParam)
-          return
-        }
+        if (titleParam) setTitle(titleParam)
+        if (usernameParam) setHostName(usernameParam)
 
         if (roomParam) {
           const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomParam)
@@ -73,17 +73,14 @@ export function CaptureFlow() {
               .select('titre')
               .eq('id', roomParam)
               .maybeSingle()
-            if (data?.titre) {
-              setTitle(data.titre)
-              return
-            }
+            if (data?.titre) setTitle(data.titre)
           }
         }
       }
     }
 
     resolveMeetingTitle()
-  }, [tokenParam, roomParam, titleParam])
+  }, [tokenParam, roomParam, titleParam, usernameParam])
 
   const currentIndex = steps.findIndex((s) => s.id === step)
 
@@ -167,8 +164,9 @@ export function CaptureFlow() {
           <ConsentScreen
             mode={mode}
             onBack={() => setStep('mode')}
-            onConfirm={(t) => {
+            onConfirm={(t, name) => {
               setTitle(t)
+              setHostName(name)
               setStep('capture')
             }}
           />
@@ -180,6 +178,7 @@ export function CaptureFlow() {
         {step === 'capture' && mode === 'video' && (
           <VisioCapture
             title={title}
+            hostName={hostName}
             isHost={!isDirectJoin}
             roomName={roomParam || 'salon-principal'}
             initialToken={tokenParam || undefined}

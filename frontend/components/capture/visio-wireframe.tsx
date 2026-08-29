@@ -13,6 +13,7 @@ import { Loader2, PhoneOff, AlertCircle, LogOut } from 'lucide-react'
 
 interface VisioCaptureProps {
   title?: string
+  hostName?: string
   isHost?: boolean
   roomName?: string
   initialToken?: string
@@ -21,6 +22,7 @@ interface VisioCaptureProps {
 
 export function VisioCapture({
   title = 'Réunion Visio',
+  hostName,
   isHost = true,
   roomName = 'salon-principal',
   initialToken,
@@ -32,7 +34,6 @@ export function VisioCapture({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Références pour l'enregistrement audio local de l'hôte
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
 
@@ -46,24 +47,20 @@ export function VisioCapture({
       }
 
       try {
-        const storedEmail =
-          typeof window !== 'undefined'
-            ? localStorage.getItem('scribe_email') || localStorage.getItem('email')
-            : null
-
-        const username = storedEmail?.split('@')[0] || `user_${Math.floor(Math.random() * 1000)}`
+        const storedName =
+          hostName ||
+          (typeof window !== 'undefined' ? localStorage.getItem('scribe_display_name') : null) ||
+          'Organisateur'
 
         const res = await fetch(
-          `/api/livekit/token?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(username)}`
+          `/api/livekit/token?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(storedName)}`
         )
         const data = await res.json()
 
         if (!res.ok) throw new Error(data.error || "Impossible d'obtenir le token LiveKit")
         setToken(data.token)
 
-        if (isHost) {
-          startLocalRecording()
-        }
+        if (isHost) startLocalRecording()
       } catch (err: any) {
         setError(err.message)
       } finally {
@@ -78,7 +75,7 @@ export function VisioCapture({
         mediaRecorderRef.current.stop()
       }
     }
-  }, [initialToken, roomName, isHost])
+  }, [initialToken, roomName, isHost, hostName])
 
   const startLocalRecording = async () => {
     try {
@@ -100,7 +97,6 @@ export function VisioCapture({
   }
 
   const handleLeave = async () => {
-    // 1. Déconnexion simple pour l'invité
     if (!isHost) {
       if (mediaRecorderRef.current && mediaRecorderRef.current.stream) {
         mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop())
@@ -109,7 +105,6 @@ export function VisioCapture({
       return
     }
 
-    // 2. Traitement complet pour l'hôte (création réunion + envoi audio IA)
     setSaving(true)
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -169,7 +164,8 @@ export function VisioCapture({
         }
       }
 
-      const { data, error: insertError } = await supabase
+      // 1. Création de la réunion
+      const { data: newMeeting, error: insertError } = await supabase
         .from('reunions')
         .insert([
           {
@@ -185,12 +181,24 @@ export function VisioCapture({
 
       if (insertError) throw insertError
 
+      // 2. Association des noms des participants (hôte + fallback 'inconnu')
+      const finalHostName =
+        hostName ||
+        (typeof window !== 'undefined' ? localStorage.getItem('scribe_display_name') : null) ||
+        userEmail.split('@')[0]
+
+      await supabase.from('participants_reunion').insert([
+        { reunion_id: newMeeting.id, label_speaker: 'inconnu', nom_reel: finalHostName },
+        { reunion_id: newMeeting.id, label_speaker: 'speaker_0', nom_reel: finalHostName },
+        { reunion_id: newMeeting.id, label_speaker: 'Hôte', nom_reel: finalHostName },
+      ])
+
       if (mediaRecorderRef.current && mediaRecorderRef.current.stream) {
         mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop())
       }
 
-      if (data?.id) {
-        router.push(`/meetings/${data.id}`)
+      if (newMeeting?.id) {
+        router.push(`/meetings/${newMeeting.id}`)
       }
     } catch (err: any) {
       setError(err.message)

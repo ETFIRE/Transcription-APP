@@ -23,6 +23,7 @@ import {
   Mic,
   MessageSquare,
   User,
+  Edit2,
 } from 'lucide-react'
 
 function formatSeconds(seconds?: number | null) {
@@ -38,6 +39,7 @@ export default function MeetingDetailPage() {
   const router = useRouter()
 
   const [meeting, setMeeting] = useState<any>(null)
+  const [participants, setParticipants] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
   const [activeTab, setActiveTab] = useState<'summary' | 'transcript'>('summary')
@@ -49,7 +51,6 @@ export default function MeetingDetailPage() {
       if (!meetingId) return
 
       try {
-        // Récupération avec toutes les tables associées
         const { data, error } = await supabase
           .from('reunions')
           .select(`
@@ -63,6 +64,7 @@ export default function MeetingDetailPage() {
 
         if (error) throw error
         setMeeting(data)
+        setParticipants(data?.participants_reunion || [])
 
         if (data && (data.statut === 'en_attente' || data.statut === 'traitement')) {
           interval = setInterval(async () => {
@@ -79,6 +81,7 @@ export default function MeetingDetailPage() {
 
             if (updated && updated.statut !== 'en_attente' && updated.statut !== 'traitement') {
               setMeeting(updated)
+              setParticipants(updated?.participants_reunion || [])
               clearInterval(interval)
             }
           }, 3000)
@@ -97,7 +100,6 @@ export default function MeetingDetailPage() {
     }
   }, [meetingId])
 
-  // Extraction des données réelles
   const analysis = Array.isArray(meeting?.analyses_reunion)
     ? meeting.analyses_reunion[0]
     : meeting?.analyses_reunion || null
@@ -126,16 +128,42 @@ export default function MeetingDetailPage() {
     }
   }
 
-  // Tri des transcriptions chronologiques
   const transcriptions: any[] = Array.isArray(meeting?.transcriptions)
     ? [...meeting.transcriptions].sort((a, b) => (a.debut_secondes || 0) - (b.debut_secondes || 0))
     : []
 
-  // Mapping des noms des participants
-  const participants: any[] = Array.isArray(meeting?.participants_reunion) ? meeting.participants_reunion : []
   const getSpeakerName = (label: string) => {
     const p = participants.find((part) => part.label_speaker === label)
-    return p?.nom_reel || label || 'Intervenant'
+    if (p?.nom_reel) return p.nom_reel
+    if (participants.length > 0 && participants[0]?.nom_reel) {
+      return participants[0].nom_reel
+    }
+    return label || 'Intervenant'
+  }
+
+  const handleRenameSpeaker = async (currentLabel: string) => {
+    const currentName = getSpeakerName(currentLabel)
+    const newName = prompt(`Nom de l'intervenant pour "${currentLabel}" :`, currentName)
+    if (!newName || newName.trim() === '' || newName === currentName) return
+
+    const trimmedName = newName.trim()
+
+    // Enregistrer ou mettre à jour dans Supabase
+    const { error } = await supabase.from('participants_reunion').upsert(
+      {
+        reunion_id: meetingId,
+        label_speaker: currentLabel,
+        nom_reel: trimmedName,
+      },
+      { onConflict: 'reunion_id,label_speaker' }
+    )
+
+    if (!error) {
+      setParticipants((prev) => {
+        const filtered = prev.filter((p) => p.label_speaker !== currentLabel)
+        return [...filtered, { label_speaker: currentLabel, nom_reel: trimmedName }]
+      })
+    }
   }
 
   const durationMin = meeting?.duree_secondes ? Math.max(1, Math.round(meeting.duree_secondes / 60)) : 0
@@ -222,7 +250,6 @@ export default function MeetingDetailPage() {
         <h1 className="text-3xl font-bold tracking-tight text-foreground">{meeting.titre || 'Sans titre'}</h1>
       </div>
 
-      {/* LECTEUR AUDIO SOURCE */}
       {meeting.audio_url ? (
         <Card className="border-border/60 bg-secondary/20 shadow-sm">
           <CardContent className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4">
@@ -281,7 +308,6 @@ export default function MeetingDetailPage() {
         </button>
       </div>
 
-      {/* ONGLET COMPTE-RENDU */}
       {activeTab === 'summary' && (
         <div className="grid gap-6 md:grid-cols-3">
           <div className="space-y-6 md:col-span-2">
@@ -366,34 +392,41 @@ export default function MeetingDetailPage() {
         </div>
       )}
 
-      {/* ONGLET TRANSCRIPTION AVEC DIARISATION */}
       {activeTab === 'transcript' && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <MessageSquare className="h-5 w-5 text-primary" /> Transcription intégrale
             </CardTitle>
-            <CardDescription>Segments audio transcrits par intervenant</CardDescription>
+            <CardDescription>Segments audio transcrits par intervenant. Cliquez sur le nom pour le modifier.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {transcriptions.length > 0 ? (
               <div className="space-y-3">
-                {transcriptions.map((t: any, index: number) => (
-                  <div key={t.id || index} className="rounded-xl border bg-secondary/20 p-4 space-y-1.5">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1.5 font-semibold text-primary">
-                        <User className="h-3.5 w-3.5" />
-                        {getSpeakerName(t.label_speaker)}
-                      </span>
-                      {(t.debut_secondes != null || t.fin_secondes != null) && (
-                        <span className="font-mono text-[11px]">
-                          {formatSeconds(t.debut_secondes)} - {formatSeconds(t.fin_secondes)}
-                        </span>
-                      )}
+                {transcriptions.map((t: any, index: number) => {
+                  const speakerName = getSpeakerName(t.label_speaker)
+                  return (
+                    <div key={t.id || index} className="rounded-xl border bg-secondary/20 p-4 space-y-1.5">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <button
+                          onClick={() => handleRenameSpeaker(t.label_speaker)}
+                          className="flex items-center gap-1.5 font-semibold text-primary hover:underline group cursor-pointer"
+                          title="Cliquer pour renommer l'intervenant"
+                        >
+                          <User className="h-3.5 w-3.5" />
+                          <span>{speakerName}</span>
+                          <Edit2 className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground" />
+                        </button>
+                        {(t.debut_secondes != null || t.fin_secondes != null) && (
+                          <span className="font-mono text-[11px]">
+                            {formatSeconds(t.debut_secondes)} - {formatSeconds(t.fin_secondes)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm leading-relaxed text-foreground">{t.texte}</p>
                     </div>
-                    <p className="text-sm leading-relaxed text-foreground">{t.texte}</p>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground italic">Aucune transcription enregistrée pour cette réunion.</p>

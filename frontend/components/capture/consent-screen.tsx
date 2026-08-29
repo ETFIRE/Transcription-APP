@@ -1,12 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { ShieldCheck, Clock, Trash2, Users, ArrowLeft } from 'lucide-react'
+import { ShieldCheck, Clock, Trash2, Users, ArrowLeft, User } from 'lucide-react'
 import type { CaptureMode } from '@/lib/types'
 
 export function ConsentScreen({
@@ -16,12 +16,32 @@ export function ConsentScreen({
 }: {
   mode: CaptureMode
   onBack: () => void
-  onConfirm: (title: string) => void
+  onConfirm: (title: string, hostName: string) => void
 }) {
   const [title, setTitle] = useState('')
+  const [hostName, setHostName] = useState('')
   const [consent, setConsent] = useState(false)
   const [notify, setNotify] = useState(true)
   const [retention, setRetention] = useState(true)
+
+  useEffect(() => {
+    const savedName = localStorage.getItem('scribe_display_name')
+    if (savedName) {
+      setHostName(savedName)
+    } else {
+      const email = localStorage.getItem('scribe_email') || localStorage.getItem('email') || ''
+      if (email) {
+        const defaultName = email.split('@')[0].replace(/[._-]/g, ' ')
+        setHostName(defaultName.charAt(0).toUpperCase() + defaultName.slice(1))
+      }
+    }
+  }, [])
+
+  const handleProceed = () => {
+    const finalName = hostName.trim() || 'Hôte'
+    localStorage.setItem('scribe_display_name', finalName)
+    onConfirm(title.trim() || 'Untitled meeting', finalName)
+  }
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -42,14 +62,29 @@ export function ConsentScreen({
           </p>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="space-y-2">
-            <Label htmlFor="meeting-title">Meeting title</Label>
-            <Input
-              id="meeting-title"
-              placeholder="e.g. Q3 Product Roadmap Review"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="host-name" className="flex items-center gap-1.5">
+                <User className="h-3.5 w-3.5 text-muted-foreground" />
+                Your name (Speaker)
+              </Label>
+              <Input
+                id="host-name"
+                placeholder="e.g. Alexandre Dupont"
+                value={hostName}
+                onChange={(e) => setHostName(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="meeting-title">Meeting title</Label>
+              <Input
+                id="meeting-title"
+                placeholder="e.g. Q3 Product Roadmap Review"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </div>
           </div>
 
           <div className="space-y-3 rounded-xl border border-border bg-secondary/40 p-4">
@@ -86,7 +121,7 @@ export function ConsentScreen({
             <Button variant="outline" onClick={onBack}>
               Cancel
             </Button>
-            <Button disabled={!consent} onClick={() => onConfirm(title.trim() || 'Untitled meeting')}>
+            <Button disabled={!consent} onClick={handleProceed}>
               {consent ? `Continue to ${mode === 'video' ? 'video room' : 'recorder'}` : 'Confirm consent to continue'}
             </Button>
           </div>
