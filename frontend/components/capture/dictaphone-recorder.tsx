@@ -22,7 +22,7 @@ interface DictaphoneRecorderProps {
 }
 
 export function DictaphoneRecorder({
-  title = 'Enregistrement Dictaphone',
+  title = 'Enregistrement Présentiel',
   hostName,
   onBack,
 }: DictaphoneRecorderProps) {
@@ -39,7 +39,6 @@ export function DictaphoneRecorder({
   const audioChunksRef = useRef<Blob[]>([])
   const timerRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Nettoyage de l'URL audio et des flux à la fermeture
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
@@ -50,7 +49,6 @@ export function DictaphoneRecorder({
     }
   }, [audioUrl])
 
-  // Démarrer l'enregistrement micro
   const startRecording = async () => {
     setError(null)
     audioChunksRef.current = []
@@ -85,7 +83,6 @@ export function DictaphoneRecorder({
     }
   }
 
-  // Arrêter l'enregistrement
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop()
@@ -94,7 +91,6 @@ export function DictaphoneRecorder({
     }
   }
 
-  // Recommencer
   const resetRecording = () => {
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setAudioBlob(null)
@@ -103,14 +99,12 @@ export function DictaphoneRecorder({
     setError(null)
   }
 
-  // Envoyer l'audio pour analyse et transcription
   const handleSubmit = async () => {
     if (!audioBlob) return
     setLoading(true)
     setError(null)
 
     try {
-      // 1. Récupération de l'utilisateur connecté
       let userEmail =
         typeof window !== 'undefined'
           ? localStorage.getItem('scribe_email') || localStorage.getItem('email')
@@ -127,7 +121,6 @@ export function DictaphoneRecorder({
 
       userEmail = userEmail.trim().toLowerCase()
 
-      // 2. Recherche du tenant_id
       const { data: tenant, error: tenantError } = await supabase
         .from('tenants')
         .select('id')
@@ -138,8 +131,7 @@ export function DictaphoneRecorder({
         throw new Error(`Compte introuvable pour l'e-mail : ${userEmail}`)
       }
 
-      // 3. Upload du fichier dans le bucket Supabase Storage
-      const fileName = `dictaphone-${Date.now()}.webm`
+      const fileName = `presentiel-${Date.now()}.webm`
       const { error: uploadError } = await supabase.storage
         .from('fichiers_audio')
         .upload(fileName, audioBlob)
@@ -154,18 +146,18 @@ export function DictaphoneRecorder({
 
       const finalTitle =
         title ||
-        `Enregistrement - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', {
+        `Enregistrement Présentiel - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', {
           hour: '2-digit',
           minute: '2-digit',
         })}`
 
-      // 4. Insertion dans la table réunions
+      // Insertion avec la valeur enum valide : 'presentiel'
       const { data: newMeeting, error: insertError } = await supabase
         .from('reunions')
         .insert([
           {
             titre: finalTitle,
-            type_mode: 'dictaphone',
+            type_mode: 'presentiel',
             statut: 'en_attente',
             tenant_id: tenant.id,
             duree_secondes: recordingTime,
@@ -177,7 +169,6 @@ export function DictaphoneRecorder({
 
       if (insertError) throw insertError
 
-      // 5. Enregistrement de l'intervenant
       const speakerName =
         hostName ||
         (typeof window !== 'undefined' ? localStorage.getItem('scribe_display_name') : null) ||
@@ -189,7 +180,6 @@ export function DictaphoneRecorder({
         { reunion_id: newMeeting.id, label_speaker: 'Intervenant', nom_reel: speakerName },
       ])
 
-      // 6. Redirection vers la page de détail
       router.push(`/meetings/${newMeeting.id}`)
     } catch (err: any) {
       console.error('Erreur lors de l’envoi :', err)
@@ -225,7 +215,6 @@ export function DictaphoneRecorder({
             </div>
           )}
 
-          {/* Écran 1 : Enregistrement en cours ou Prêt à enregistrer */}
           {!audioBlob ? (
             <div className="flex flex-col items-center space-y-6">
               <div className="relative">
@@ -252,7 +241,6 @@ export function DictaphoneRecorder({
               </div>
             </div>
           ) : (
-            /* Écran 2 : Prévisualisation audio & Envoi */
             <div className="w-full flex flex-col items-center space-y-6">
               <div className="w-full rounded-xl bg-secondary/30 p-4">
                 <audio controls src={audioUrl || ''} className="w-full h-10 outline-none" />
