@@ -14,10 +14,51 @@ import {
   Clock,
   CheckSquare,
   Plus,
-  Video,
-  Mic,
   Calendar,
 } from 'lucide-react'
+
+function extractMeetingData(m: any) {
+  let parsedCr: any = null
+  if (typeof m.compte_rendu === 'string') {
+    try {
+      parsedCr = JSON.parse(m.compte_rendu)
+    } catch {
+      parsedCr = null
+    }
+  } else if (typeof m.compte_rendu === 'object' && m.compte_rendu !== null) {
+    parsedCr = m.compte_rendu
+  }
+
+  const summary =
+    m.resume ||
+    m.synthese ||
+    m.summary ||
+    parsedCr?.resume ||
+    parsedCr?.synthese ||
+    parsedCr?.summary ||
+    (typeof m.compte_rendu === 'string' && !parsedCr ? m.compte_rendu : '') ||
+    m.transcription ||
+    ''
+
+  let tags: string[] = []
+  if (Array.isArray(m.tags)) tags = m.tags
+  else if (Array.isArray(parsedCr?.tags)) tags = parsedCr.tags
+  else if (typeof m.tags === 'string') {
+    try {
+      tags = JSON.parse(m.tags)
+    } catch {
+      tags = m.tags.split(',').map((t: string) => t.trim())
+    }
+  }
+
+  let actions: any[] = []
+  if (Array.isArray(m.actions)) actions = m.actions
+  else if (Array.isArray(parsedCr?.actions)) actions = parsedCr.actions
+  else if (Array.isArray(m.action_items)) actions = m.action_items
+  else if (Array.isArray(parsedCr?.action_items)) actions = parsedCr.action_items
+
+  return { summary, tags, actions }
+}
 
 export default function HistoryPage() {
   const router = useRouter()
@@ -38,7 +79,6 @@ export default function HistoryPage() {
           .select('*')
           .order('cree_le', { ascending: false })
 
-        // Si l'utilisateur a un compte identifié, on filtre par son tenant_id
         if (storedEmail) {
           const { data: tenant } = await supabase
             .from('tenants')
@@ -65,23 +105,19 @@ export default function HistoryPage() {
   }, [])
 
   const filteredMeetings = meetings.filter((m) => {
+    const { summary, tags } = extractMeetingData(m)
     const title = (m.titre || '').toLowerCase()
     const query = searchQuery.toLowerCase()
 
-    // Recherche dans le titre
     if (title.includes(query)) return true
+    if (summary.toLowerCase().includes(query)) return true
+    if (tags.join(' ').toLowerCase().includes(query)) return true
 
-    // Recherche dans le compte-rendu ou les tags
-    const cr = m.compte_rendu || {}
-    const summary = typeof cr === 'string' ? cr : cr.resume || ''
-    const tags = Array.isArray(cr.tags) ? cr.tags.join(' ') : ''
-
-    return summary.toLowerCase().includes(query) || tags.toLowerCase().includes(query)
+    return false
   })
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:py-10 space-y-6">
-      {/* En-tête */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">History</h1>
@@ -95,7 +131,6 @@ export default function HistoryPage() {
         </Button>
       </div>
 
-      {/* Barre de recherche */}
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
@@ -106,13 +141,11 @@ export default function HistoryPage() {
         />
       </div>
 
-      {/* État de chargement */}
       {loading ? (
         <div className="flex h-60 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       ) : filteredMeetings.length === 0 ? (
-        /* État vide */
         <Card className="border-dashed p-12 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-muted-foreground mb-3">
             <Calendar className="h-6 w-6" />
@@ -126,44 +159,38 @@ export default function HistoryPage() {
           </Button>
         </Card>
       ) : (
-        /* Grille des réunions */
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {filteredMeetings.map((m) => {
+            const { summary, tags, actions } = extractMeetingData(m)
+
             const formattedDate = m.cree_le
               ? new Intl.DateTimeFormat('fr-FR', {
                   day: 'numeric',
                   month: 'long',
                   year: 'numeric',
                 }).format(new Date(m.cree_le))
-              : '29 août 2026'
+              : 'Date inconnue'
 
-            const cr = m.compte_rendu || {}
-            const summaryText =
-              typeof cr === 'string'
-                ? cr
-                : cr.resume || cr.summary || m.transcription || "En attente de génération du compte-rendu..."
-
-            const tags: string[] = Array.isArray(cr.tags) ? cr.tags : []
-            const actions: any[] = Array.isArray(cr.actions) ? cr.actions : Array.isArray(cr.action_items) ? cr.action_items : []
+            const displaySummary =
+              summary ||
+              (m.statut === 'en_attente' || m.statut === 'traitement'
+                ? 'Traitement IA en cours...'
+                : 'Compte-rendu généré.')
 
             return (
               <Link key={m.id} href={`/meetings/${m.id}`} className="group block">
                 <Card className="h-full flex flex-col justify-between transition-all hover:border-brand hover:shadow-md">
                   <CardContent className="p-6 space-y-4 flex-1">
-                    {/* Date */}
                     <p className="text-xs font-medium text-muted-foreground">{formattedDate}</p>
 
-                    {/* Titre */}
                     <h3 className="text-xl font-bold text-foreground group-hover:text-primary transition-colors line-clamp-2">
                       {m.titre || 'Sans titre'}
                     </h3>
 
-                    {/* Résumé extrait */}
                     <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
-                      {summaryText}
+                      {displaySummary}
                     </p>
 
-                    {/* Tags */}
                     {tags.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 pt-1">
                         {tags.slice(0, 5).map((t, idx) => (
@@ -178,7 +205,6 @@ export default function HistoryPage() {
                     )}
                   </CardContent>
 
-                  {/* Bas de carte : Durée, Actions, et badge Audio */}
                   <div className="border-t border-border/50 px-6 py-3.5 flex items-center justify-between text-xs text-muted-foreground bg-secondary/10 rounded-b-xl">
                     <div className="flex items-center gap-3">
                       <span className="flex items-center gap-1">
@@ -191,7 +217,6 @@ export default function HistoryPage() {
                       )}
                     </div>
 
-                    {/* Indicateur Audio Original */}
                     {m.audio_url && (
                       <span className="flex items-center gap-1 text-primary font-medium bg-primary/10 px-2 py-0.5 rounded text-[11px]">
                         <Volume2 className="h-3 w-3" /> Audio
