@@ -9,39 +9,61 @@ import {
   RoomAudioRenderer,
 } from '@livekit/components-react'
 import { supabase } from '@/lib/supabase'
-import { Loader2, PhoneOff, AlertCircle } from 'lucide-react'
+import { Loader2, PhoneOff, AlertCircle, LogOut } from 'lucide-react'
 
 interface VisioCaptureProps {
   title?: string
+  isHost?: boolean
+  roomName?: string
+  initialToken?: string
   onBack?: () => void
 }
 
-export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureProps) {
+export function VisioCapture({
+  title = 'Réunion Visio',
+  isHost = true,
+  roomName = 'salon-principal',
+  initialToken,
+  onBack,
+}: VisioCaptureProps) {
   const router = useRouter()
-  const [token, setToken] = useState<string>('')
-  const [loading, setLoading] = useState(true)
+  const [token, setToken] = useState<string>(initialToken || '')
+  const [loading, setLoading] = useState(!initialToken)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Références pour l'enregistrement audio local
+  // Références pour l'enregistrement audio local de l'hôte
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
 
-  const roomName = 'salon-principal'
-
   useEffect(() => {
     async function fetchToken() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        const username = user?.email?.split('@')[0] || `invite_${Math.floor(Math.random() * 1000)}`
+      if (initialToken) {
+        setToken(initialToken)
+        setLoading(false)
+        if (isHost) startLocalRecording()
+        return
+      }
 
-        const res = await fetch(`/api/livekit/token?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(username)}`)
+      try {
+        const storedEmail =
+          typeof window !== 'undefined'
+            ? localStorage.getItem('scribe_email') || localStorage.getItem('email')
+            : null
+
+        const username = storedEmail?.split('@')[0] || `user_${Math.floor(Math.random() * 1000)}`
+
+        const res = await fetch(
+          `/api/livekit/token?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(username)}`
+        )
         const data = await res.json()
 
-        if (!res.ok) throw new Error(data.error || 'Impossible d\'obtenir le token LiveKit')
+        if (!res.ok) throw new Error(data.error || "Impossible d'obtenir le token LiveKit")
         setToken(data.token)
 
-        startLocalRecording()
+        if (isHost) {
+          startLocalRecording()
+        }
       } catch (err: any) {
         setError(err.message)
       } finally {
@@ -56,7 +78,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
         mediaRecorderRef.current.stop()
       }
     }
-  }, [])
+  }, [initialToken, roomName, isHost])
 
   const startLocalRecording = async () => {
     try {
@@ -73,22 +95,32 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
 
       mediaRecorder.start(1000)
     } catch (err) {
-      console.error("Erreur d'accès au micro pour l'enregistrement:", err)
+      console.error("Erreur d'accès au micro pour l'enregistrement hôte :", err)
     }
   }
 
-  if (saving) return null;
-  
   const handleLeave = async () => {
+    // 1. Déconnexion simple pour l'invité
+    if (!isHost) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.stream) {
+        mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop())
+      }
+      router.push('/dashboard')
+      return
+    }
+
+    // 2. Traitement complet pour l'hôte (création réunion + envoi audio IA)
     setSaving(true)
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop()
-        await new Promise(resolve => setTimeout(resolve, 500)) 
+        await new Promise((resolve) => setTimeout(resolve, 500))
       }
 
-      // 1. Récupérer l'e-mail (localStorage ou fallback Supabase Auth)
-      let userEmail = typeof window !== 'undefined' ? localStorage.getItem('scribe_email') : null
+      let userEmail =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('scribe_email') || localStorage.getItem('email')
+          : null
 
       if (!userEmail) {
         const { data: { user } } = await supabase.auth.getUser()
@@ -96,28 +128,31 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
       }
 
       if (!userEmail) {
-        throw new Error("Aucun utilisateur connecté trouvé. Veuillez vous reconnecter.")
+        throw new Error('Aucun utilisateur connecté trouvé. Veuillez vous reconnecter.')
       }
 
-      userEmail = userEmail.trim()
+      userEmail = userEmail.trim().toLowerCase()
 
-      // 2. Récupérer le tenant_id associé
       const { data: tenant, error: tenantError } = await supabase
         .from('tenants')
         .select('id')
-        .eq('email', userEmail)
+        .ilike('email', userEmail)
         .single()
 
       if (tenantError || !tenant) {
-        throw new Error(`Impossible de trouver le tenant pour l'e-mail : ${userEmail}`)
+        throw new Error(`Impossible de trouver le tenant pour : ${userEmail}`)
       }
 
       const tenantId = tenant.id
-      const finalTitle = title || `Réunion Visio - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
-      
+      const finalTitle =
+        title ||
+        `Réunion Visio - ${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR', {
+          hour: '2-digit',
+          minute: '2-digit',
+        })}`
+
       let audioUrl = null
-      
-      // 3. Uploader le fichier audio sur Supabase Storage
+
       if (audioChunksRef.current.length > 0) {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         const fileName = `visio-${Date.now()}.webm`
@@ -134,7 +169,6 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
         }
       }
 
-      // 4. Insérer la réunion en base avec le bon tenant_id
       const { data, error: insertError } = await supabase
         .from('reunions')
         .insert([
@@ -143,7 +177,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
             type_mode: 'visio',
             statut: 'en_attente',
             tenant_id: tenantId,
-            audio_url: audioUrl
+            audio_url: audioUrl,
           },
         ])
         .select('id')
@@ -152,7 +186,7 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
       if (insertError) throw insertError
 
       if (mediaRecorderRef.current && mediaRecorderRef.current.stream) {
-        mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop())
+        mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop())
       }
 
       if (data?.id) {
@@ -162,6 +196,16 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
       setError(err.message)
       setSaving(false)
     }
+  }
+
+  if (saving) {
+    return (
+      <div className="flex h-[550px] flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-card p-6 shadow-lg">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        <p className="text-base font-medium">Finalisation et génération du compte-rendu en cours...</p>
+        <p className="text-xs text-muted-foreground">Veuillez patienter pendant l'envoi de l'enregistrement audio.</p>
+      </div>
+    )
   }
 
   if (loading) {
@@ -179,7 +223,10 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
         <AlertCircle className="h-8 w-8 text-destructive" />
         <p className="text-sm font-medium text-destructive">{error}</p>
         {onBack && (
-          <button onClick={onBack} className="mt-2 rounded-lg border border-input bg-background px-4 py-2 text-xs font-medium text-foreground hover:bg-accent">
+          <button
+            onClick={onBack}
+            className="mt-2 rounded-lg border border-input bg-background px-4 py-2 text-xs font-medium text-foreground hover:bg-accent"
+          >
             Retour
           </button>
         )}
@@ -205,22 +252,28 @@ export function VisioCapture({ title = 'Réunion Visio', onBack }: VisioCaptureP
       </div>
 
       <div className="flex items-center justify-between border-t border-border/40 bg-card p-4">
-        <span className="text-xs text-muted-foreground">Visioconférence en direct (Enregistrement en cours)</span>
-        <button
-          onClick={handleLeave}
-          disabled={saving}
-          className="inline-flex items-center gap-2 rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-white transition hover:bg-destructive/90 disabled:opacity-50"
-        >
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" /> Finalisation et Envoi...
-            </>
-          ) : (
-            <>
-              <PhoneOff className="h-4 w-4" /> Quitter et générer le compte-rendu
-            </>
-          )}
-        </button>
+        <span className="text-xs text-muted-foreground">
+          {isHost
+            ? 'Visioconférence en direct (Enregistrement de la session par l’hôte)'
+            : 'Visioconférence en direct (Session invité)'}
+        </span>
+
+        {isHost ? (
+          <button
+            onClick={handleLeave}
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-white transition hover:bg-destructive/90 disabled:opacity-50"
+          >
+            <PhoneOff className="h-4 w-4" /> Quitter et générer le compte-rendu
+          </button>
+        ) : (
+          <button
+            onClick={handleLeave}
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-secondary px-4 py-2 text-sm font-medium text-foreground transition hover:bg-destructive hover:text-white"
+          >
+            <LogOut className="h-4 w-4" /> Quitter la réunion
+          </button>
+        )}
       </div>
     </div>
   )

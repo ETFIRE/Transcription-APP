@@ -65,7 +65,6 @@ export function CaptureFlow() {
           return
         }
 
-        // Si la room est un UUID de réunion Supabase, on va chercher son vrai titre
         if (roomParam) {
           const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomParam)
           if (isUuid) {
@@ -179,7 +178,13 @@ export function CaptureFlow() {
           <DictaphoneRecorder title={title} onBack={() => setStep('consent')} />
         )}
         {step === 'capture' && mode === 'video' && (
-          <VisioCapture title={title} onBack={() => setStep('consent')} />
+          <VisioCapture
+            title={title}
+            isHost={!isDirectJoin}
+            roomName={roomParam || 'salon-principal'}
+            initialToken={tokenParam || undefined}
+            onBack={() => setStep('consent')}
+          />
         )}
       </div>
     </div>
