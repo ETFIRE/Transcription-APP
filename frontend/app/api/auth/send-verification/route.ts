@@ -1,50 +1,58 @@
-import { NextResponse } from 'next/server'
-import { Resend } from 'resend'
+import { NextResponse } from 'next/server';
 
-const resend = new Resend(process.env.RESEND_API_KEY)
-
-export const dynamic = 'force-dynamic'
-
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    const { email, token } = await req.json()
+    const { email, token } = await request.json();
 
     if (!email || !token) {
-      return NextResponse.json({ error: 'Paramètres manquants.' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Email et token sont obligatoires' },
+        { status: 400 }
+      );
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || req.headers.get('origin') || 'http://localhost:3000'
-    const verifyUrl = `${appUrl}/api/auth/verify?token=${token}`
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://transcription-14rnqy59m-on-fire2.vercel.app';
+    const verifyUrl = `${appUrl}/verify?token=${token}`;
 
-    const { data, error } = await resend.emails.send({
-      from: 'Scribe <onboarding@resend.dev>',
-      to: [email],
-      subject: 'Confirmez votre adresse e-mail — Scribe',
-      html: `
-        <div style="font-family: sans-serif; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #eaeaea; border-radius: 8px;">
-          <h2 style="color: #111; margin-bottom: 16px;">Bienvenue sur Scribe</h2>
-          <p style="color: #444; line-height: 1.5;">Merci de finaliser votre inscription en confirmant votre adresse e-mail :</p>
-          <div style="margin: 28px 0;">
-            <a href="${verifyUrl}" style="background-color: #000; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">
-              Confirmer mon compte
-            </a>
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'api-key': process.env.BREVO_API_KEY || '',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        sender: {
+          name: 'Transcription App',
+          email: process.env.BREVO_SENDER_EMAIL || 'elietoure123@gmail.com',
+        },
+        to: [{ email }],
+        subject: 'Confirmez votre compte - Transcription App',
+        htmlContent: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2>Confirmation de votre compte</h2>
+            <p>Merci pour votre inscription. Cliquez sur le lien ci-dessous pour activer votre accès :</p>
+            <p style="margin: 25px 0;">
+              <a href="${verifyUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                Vérifier mon adresse email
+              </a>
+            </p>
+            <p style="color: #666; font-size: 13px;">Si le bouton ne fonctionne pas, copiez ce lien :<br>${verifyUrl}</p>
           </div>
-          <p style="color: #888; font-size: 13px; word-break: break-all;">
-            Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :<br/>
-            <a href="${verifyUrl}" style="color: #555;">${verifyUrl}</a>
-          </p>
-        </div>
-      `,
-    })
+        `,
+      }),
+    });
 
-    if (error) {
-      console.error('Erreur API Resend :', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('Erreur API Brevo :', errorData);
+      return NextResponse.json({ error: errorData }, { status: response.status });
     }
 
-    return NextResponse.json({ success: true, data })
-  } catch (err: any) {
-    console.error('Exception lors de l’envoi de l’e-mail :', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    const data = await response.json();
+    return NextResponse.json({ success: true, messageId: data.messageId });
+  } catch (error) {
+    console.error('Erreur serveur send-verification :', error);
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
 }
