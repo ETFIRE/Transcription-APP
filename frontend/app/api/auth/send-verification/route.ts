@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://transcription-14rnqy59m-on-fire2.vercel.app';
-    const verifyUrl = `${appUrl}/verify?token=${token}`;
+    const verifyUrl = `${appUrl}/api/auth/verify?token=${token}`;
 
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
